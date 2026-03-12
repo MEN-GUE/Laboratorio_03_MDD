@@ -1,0 +1,6 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+# Ignorar el dataset para no saturar el repositorio
+listings.RData

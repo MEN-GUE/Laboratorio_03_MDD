@@ -1,0 +1,36 @@
+---
+title: "Pasaporte_Lab3.Rmd"
+author: "MEN-GUE"
+date: "2026-03-12"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Librerias
+```{r librerias}
+# Cargar librerías necesarias
+library(tidyverse) # Para manipulación y visualización (ggplot2, dplyr)
+library(skimr)     # Excelente para describir variables rápidamente
+library(corrplot)  # Para la matriz de correlación
+
+# 1. Cargar el conjunto de datos
+# Asegúrate de que listings.RData esté en la misma carpeta que tu proyecto
+load("listings.RData")
+
+# Si el objeto dentro del RData se llama diferente, asígnalo a un dataframe manejable.
+# Supongamos que se carga como 'df_listings'
+df <- df_listings
+```
+
+## Descripción de las Variables
+```{r descripcion}
+# 2. Descripción general de las variables
+skim(df)
+```
+
+
+
+
