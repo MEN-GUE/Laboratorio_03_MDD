@@ -15,20 +15,134 @@ knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse) # Para manipulación y visualización (ggplot2, dplyr)
 library(skimr)     # Excelente para describir variables rápidamente
 library(corrplot)  # Para la matriz de correlación
+```
 
+## Datos
+```{r dartos}
 # 1. Cargar el conjunto de datos
 # Asegúrate de que listings.RData esté en la misma carpeta que tu proyecto
 load("listings.RData")
 
 # Si el objeto dentro del RData se llama diferente, asígnalo a un dataframe manejable.
 # Supongamos que se carga como 'df_listings'
-df <- df_listings
+df <- listings
 ```
+
 
 ## Descripción de las Variables
 ```{r descripcion}
 # 2. Descripción general de las variables
 skim(df)
+```
+Variables Cuantitativas
+host_listings_count: Cantidad de propiedades que el anfitrión tiene listadas en total.
+
+host_total_listings_count: Número total histórico de anuncios manejados por el anfitrión.
+
+latitude: Coordenada geográfica de latitud para ubicar la propiedad en el mapa.
+
+longitude: Coordenada geográfica de longitud para ubicar la propiedad en el mapa.
+
+accommodates: Número máximo de huéspedes que caben cómodamente en la vivienda.
+
+bathrooms: Cantidad de baños disponibles en el alojamiento.
+
+bedrooms: Número de habitaciones separadas diseñadas para dormir.
+
+beds: Total de camas físicas disponibles para los huéspedes.
+
+price: Costo por noche del alquiler de la vivienda (tu variable respuesta).
+
+minimum_nights: Cantidad mínima de noches que un huésped debe reservar.
+
+maximum_nights: Límite máximo de noches permitidas para una sola reserva.
+
+availability_365: Días que la propiedad está disponible para alquilar en el transcurso de un año.
+
+availability_eoy: Días disponibles para reservar hasta el final del año en curso.
+
+number_of_reviews: Total de comentarios y evaluaciones dejados por huéspedes anteriores.
+
+number_of_reviews_ltm: Cantidad de evaluaciones recibidas en los últimos doce meses.
+
+number_of_reviews_l30d: Cantidad de evaluaciones recibidas durante el último mes.
+
+number_of_reviews_ly: Cantidad de evaluaciones que la propiedad recibió el año pasado.
+
+estimated_occupancy_l365d: Estimación de los días que el lugar estuvo ocupado en el último año.
+
+review_scores_rating: Calificación general promedio dada por los huéspedes.
+
+review_scores_accuracy: Puntuación sobre qué tan veraz era la descripción del anuncio.
+
+review_scores_cleanliness: Puntuación otorgada por los huéspedes sobre la limpieza del alojamiento.
+
+review_scores_checkin: Puntuación sobre la facilidad para la entrega de llaves e ingreso.
+
+review_scores_communication: Puntuación sobre la atención y rapidez de respuesta del anfitrión.
+
+review_scores_location: Puntuación sobre la conveniencia y seguridad del vecindario.
+
+review_scores_value: Puntuación sobre la relación calidad y precio del alojamiento.
+
+calculated_host_listings_count: Total de anuncios activos del mismo anfitrión en esta ciudad específica.
+
+calculated_host_listings_count_entire_homes: Cantidad de casas o departamentos enteros listados por el anfitrión.
+
+calculated_host_listings_count_private_rooms: Cantidad de habitaciones privadas listadas por el anfitrión.
+
+calculated_host_listings_count_shared_rooms: Cantidad de habitaciones compartidas listadas por el anfitrión.
+
+reviews_per_month: Promedio mensual de reseñas que recibe la propiedad históricamente.
+
+
+
+Variables Cualitativas (Categóricas o Texto)
+room_type: Indica si el alquiler es una casa entera, una habitación privada o una habitación compartida.
+
+property_type: Describe el tipo específico de edificación del alojamiento, como apartamento, casa o cabaña.
+
+neighbourhood_cleansed: Nombre oficial del barrio o zona específica donde se ubica la propiedad.
+
+host_is_superhost: Indica con un verdadero o falso si el dueño tiene estatus de anfitrión destacado en la plataforma.
+
+has_availability: Confirma con un verdadero o falso si el lugar puede recibir reservas actualmente.
+
+instant_bookable: Muestra con un verdadero o falso si la reservación se confirma automáticamente sin esperar aprobación.
+
+amenities: Lista de texto que detalla las comodidades incluidas como internet, piscina o parqueo.
+
+
+Se decidió eliminar estas variables del modelo (id, scrape_id y host_id) ya que no aportan valor explicativo ni predictivo sobre el precio de una vivienda, siendo únicamente códigos internos. Además, para evitar problemas de multicolinealidad en los futuros modelos de regresión, se conservarán únicamente las métricas globales como minimum_nights, maximum_nights y availability_365, descartando las subdivisiones a menos que el análisis de correlación posterior demuestre lo contrario.
+
+## Limpiar nuestros datos
+```{r limpieza}
+# --- LIMPIEZA INICIAL DE VARIABLES ---
+
+# 1. Eliminar variables que no aportan valor predictivo (IDs y redundantes)
+df_clean <- df %>%
+  select(
+    -id, -scrape_id, -host_id, 
+    # Quitamos redundancias de noches
+    -minimum_minimum_nights, -maximum_minimum_nights, 
+    -minimum_maximum_nights, -maximum_maximum_nights,
+    -minimum_nights_avg_ntm, -maximum_nights_avg_ntm,
+    # Quitamos redundancias de disponibilidad (dejamos la anual)
+    -availability_30, -availability_60, -availability_90,
+    # Quitamos revenue por exceso de nulos y data leakage
+    -estimated_revenue_l365d
+  )
+
+# 2. Manejo inicial de NAs en variables críticas de infraestructura
+# Como las casas DEBEN tener baños y camas para definir un precio lógico,
+# podemos eliminar las filas donde estas variables falten, o imputarlas. 
+# Por ahora, dado el gran volumen de datos (174k), podemos eliminar esos NAs
+# en variables estructurales y ver con cuántas filas nos quedamos:
+df_clean <- df_clean %>%
+  drop_na(price, accommodates, bedrooms, bathrooms, beds)
+
+# Revisamos las dimensiones del nuevo dataset
+dim(df_clean)
 ```
 
 
