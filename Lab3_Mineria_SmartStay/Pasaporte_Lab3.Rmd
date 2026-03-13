@@ -190,6 +190,100 @@ g1 + g2 # Muestra ambas gráficas juntas si usas patchwork, sino córrelas separ
 
 Al analizar la distribución de los precios de los alojamientos, notamos que la gráfica inicial muestra que la gran mayoría de las propiedades tienen precios bajos o medios, mientras que existe un grupo pequeño de propiedades extremadamente caras que alargan la gráfica hacia la derecha. Como los modelos que construiremos más adelante asumen que los datos tienen una forma equilibrada, aplicamos una transformación matemática (logaritmo) a los precios. Esto ayudó a que los datos se distribuyan con una forma mucho más parecida a una campana tradicional, lo cual facilitará las predicciones del modelo
 
+
+## Matriz de correlacion 
+```{r}
+# -----------------------------
+# MATRIZ DE CORRELACIÓN
+# -----------------------------
+
+# Seleccionamos variables numéricas relevantes
+df_corr <- df_clean %>%
+  select(
+    price,
+    accommodates,
+    bedrooms,
+    bathrooms,
+    beds,
+    number_of_reviews,
+    review_scores_rating,
+    availability_365,
+    minimum_nights
+  )
+
+# Calculamos la matriz de correlación
+corr_matrix <- cor(df_corr, use = "complete.obs")
+
+# Visualizamos la matriz
+corrplot(corr_matrix,
+         method = "color",
+         type = "upper",
+         tl.col = "black",
+         tl.cex = 0.8,
+         number.cex = 0.7)
+```
+
+## Relacion de precios
+
+```{r}
+#Precio vs Capacidad de Huéspedes
+
+ggplot(df_clean, aes(x = accommodates, y = price)) +
+  geom_point(alpha = 0.2, color = "steelblue") +
+  geom_smooth(method = "lm", color = "red") +
+  theme_minimal() +
+  labs(
+    title = "Relación entre Precio y Capacidad de Huéspedes",
+    x = "Capacidad (accommodates)",
+    y = "Precio"
+  )
+```
+
+```{r}
+#Precio vs Número de Habitaciones
+ggplot(df_clean, aes(x = bedrooms, y = price)) +
+  geom_point(alpha = 0.2, color = "darkgreen") +
+  geom_smooth(method = "lm", color = "red") +
+  theme_minimal() +
+  labs(
+    title = "Relación entre Precio y Número de Habitaciones",
+    x = "Habitaciones",
+    y = "Precio"
+  )
+```
+
+```{r}
+#Precio vs Tipo de Habitación
+ggplot(df_clean, aes(x = room_type, y = price, fill = room_type)) +
+  geom_boxplot() +
+  theme_minimal() +
+  labs(
+    title = "Distribución del Precio según Tipo de Habitación",
+    x = "Tipo de habitación",
+    y = "Precio"
+  ) +
+  theme(legend.position = "none")
+```
+
+```{r}
+#Precio vs Calificación de Usuarios
+ggplot(df_clean, aes(x = review_scores_rating, y = price)) +
+  geom_point(alpha = 0.2, color = "purple") +
+  geom_smooth(method = "lm", color = "red") +
+  theme_minimal() +
+  labs(
+    title = "Relación entre Precio y Calificación del Alojamiento",
+    x = "Calificación promedio",
+    y = "Precio"
+  )
+```
+
+Para analizar la relación entre el precio y otras características del alojamiento, se construyó una matriz de correlación utilizando variables numéricas relevantes como capacidad de huéspedes, número de habitaciones, número de baños y cantidad de reseñas. Los resultados permiten identificar qué variables presentan una relación más fuerte con el precio.
+
+Además, se generaron gráficos que muestran la relación entre el precio y diferentes variables explicativas. En general, se observa que propiedades con mayor capacidad de huéspedes y mayor número de habitaciones tienden a tener precios más altos. También se observa que los alojamientos tipo vivienda completa suelen presentar precios mayores en comparación con habitaciones privadas o compartidas. Estas visualizaciones ayudan a comprender los factores que influyen en la variación del precio de los alojamientos.
+
+
+
 ## Clustering
 ```{r}
 # --- CHUNK 2: CLUSTERING ---
