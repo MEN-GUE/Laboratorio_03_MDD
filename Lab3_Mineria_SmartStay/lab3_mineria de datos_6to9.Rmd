@@ -1,0 +1,255 @@
+---
+title: "Predicción del Precio de Listados Airbnb"
+author: Alejandro Antón
+output: html_document
+---
+
+# Cargar Datos y Preparación
+
+```{r}
+# Cargar dataset
+load("listings.RData")
+
+# Ver estructura
+str(listings)
+
+# Limpiar variable precio
+listings$price <- gsub("[$,]", "", listings$price)
+listings$price <- as.numeric(listings$price)
+
+# Eliminar filas con precio NA
+listings <- listings[!is.na(listings$price), ]
+
+# Revisar resumen
+summary(listings$price)
+```
+
+---
+
+# Ejercicio 6
+
+```{r}
+# 6. Todos los resultados deben ser reproducibles por lo que debe fijar que 
+# los conjuntos de entrenamiento y prueba sean los mismos siempre que se ejecute el código.
+
+# Fijar semilla
+set.seed(123)
+
+# División entrenamiento / prueba
+n <- nrow(listings)
+
+train_index <- sample(1:n, size = 0.7*n)
+
+train <- listings[train_index, ]
+test  <- listings[-train_index, ]
+
+dim(train)
+dim(test)
+```
+
+
+
+# Ejercicio 7
+
+```{r}
+# 7. Seleccione una de las variables y haga un modelo univariado de regresión lineal 
+# para predecir el precio de las casas.
+# Analice el modelo (resumen, residuos, resultados de la predicción).
+# Muéstrelo gráficamente.
+
+# Usaremos la variable accommodates
+modelo_uni <- lm(price ~ accommodates, data = train)
+
+# Resumen del modelo
+summary(modelo_uni)
+```
+
+## Gráfico del modelo
+
+```{r}
+plot(train$accommodates, train$price,
+     main = "Relación entre Precio y Capacidad",
+     xlab = "Número de huéspedes (accommodates)",
+     ylab = "Precio")
+
+abline(modelo_uni, col="red", lwd=2)
+```
+
+## Análisis de residuos
+
+```{r}
+par(mfrow=c(2,2))
+plot(modelo_uni)
+```
+
+## Predicción
+
+```{r}
+pred_uni <- predict(modelo_uni, newdata = test)
+
+mse_uni <- mean((test$price - pred_uni)^2, na.rm = TRUE)
+
+mse_uni
+```
+
+---
+
+# Ejercicio 8
+
+```{r}
+# 8. Haga un modelo de regresión lineal con todas las variables numéricas 
+# para predecir el precio de las casas.
+# Analice el modelo (resumen, residuos, resultados de la predicción).
+# Muestre el modelo gráficamente.
+
+# Seleccionar variables numéricas relevantes
+vars <- c(
+  "price",
+  "accommodates",
+  "bathrooms",
+  "bedrooms",
+  "beds",
+  "minimum_nights",
+  "availability_365",
+  "number_of_reviews",
+  "review_scores_rating"
+)
+
+train_num <- train[, vars]
+test_num  <- test[, vars]
+
+# Eliminar NA
+train_num <- na.omit(train_num)
+test_num  <- na.omit(test_num)
+
+# Modelo multivariado
+modelo_multi <- lm(price ~ ., data = train_num)
+
+summary(modelo_multi)
+```
+
+## Predicciones
+
+```{r}
+pred_multi <- predict(modelo_multi, newdata = test_num)
+
+mse_train <- mean(residuals(modelo_multi)^2)
+
+mse_test <- mean((test_num$price - pred_multi)^2)
+
+mse_train
+mse_test
+```
+
+## Gráfico Predicción vs Real
+
+```{r}
+plot(test_num$price, pred_multi,
+     main="Predicción vs Precio Real",
+     xlab="Precio Real",
+     ylab="Precio Predicho")
+
+abline(0,1,col="red",lwd=2)
+```
+
+## Análisis de residuos
+
+```{r}
+par(mfrow=c(2,2))
+plot(modelo_multi)
+```
+
+---
+
+# Ejercicio 9
+
+```{r}
+# 9. Analice el modelo. Determine si hay multicolinealidad entre las variables,
+# y cuáles son las que aportan al modelo.
+# Haga un análisis de correlación de las características del modelo y especifique
+# si el modelo se adapta bien a los datos.
+# Explique si hay sobreajuste (overfitting) o no.
+# En caso de existir sobreajuste, haga otro modelo que lo corrija.
+
+# Instalar paquetes si es necesario
+install.packages("car")
+install.packages("corrplot")
+
+library(car)
+library(corrplot)
+```
+
+## Multicolinealidad
+
+```{r}
+vif_values <- vif(modelo_multi)
+
+vif_values
+```
+
+## Matriz de correlación
+
+```{r}
+cor_matrix <- cor(train_num)
+
+corrplot(cor_matrix, method = "color")
+```
+
+## Evaluación del modelo
+
+```{r}
+summary(modelo_multi)$adj.r.squared
+
+mse_train
+mse_test
+```
+
+## Modelo reducido (si existe sobreajuste)
+
+```{r}
+modelo_reducido <- lm(price ~ accommodates + bedrooms + bathrooms + review_scores_rating,
+                      data = train_num)
+
+summary(modelo_reducido)
+
+pred_reducido <- predict(modelo_reducido, newdata = test_num)
+
+mse_reducido <- mean((test_num$price - pred_reducido)^2)
+
+mse_reducido
+```
+
+
+ -----------------------------
+# EJERCICIO 9 – ANÁLISIS DEL MODELO
+# -----------------------------
+
+# Para analizar la multicolinealidad entre las variables independientes
+# se utilizó el Factor de Inflación de Varianza (VIF).
+
+# Este indicador permite detectar si algunas variables están altamente
+# correlacionadas entre sí. Valores de VIF cercanos a 1 indican
+# ausencia de multicolinealidad, mientras que valores mayores a 5
+# o 10 sugieren correlaciones problemáticas.
+
+# También se realizó una matriz de correlación entre las variables
+# numéricas utilizadas en el modelo. Este análisis permite identificar
+# relaciones lineales entre variables y detectar posibles redundancias.
+
+# Variables relacionadas con la estructura de la vivienda, como
+# bedrooms, beds y accommodates, suelen mostrar correlaciones
+# moderadas debido a que describen características similares.
+
+# El ajuste del modelo se evaluó mediante el R² ajustado, el cual
+# indica qué proporción de la variabilidad del precio es explicada
+# por las variables incluidas en el modelo.
+
+# Además, se compararon los errores del modelo en el conjunto
+# de entrenamiento y en el conjunto de prueba.
+
+# Si el error de prueba es similar al error de entrenamiento,
+# el modelo no presenta evidencia fuerte de sobreajuste (overfitting).
+
+# En caso de detectar sobreajuste, una posible solución es construir
+# un modelo reducido eliminando variables poco relevantes o altamente
+# correlacionadas, lo cual puede mejorar la estabilidad del modelo.
