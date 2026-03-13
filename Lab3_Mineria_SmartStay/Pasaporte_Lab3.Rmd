@@ -9,23 +9,22 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## Librerias
+## Librerías
 ```{r librerias}
-# Cargar librerías necesarias
-library(tidyverse) # Para manipulación y visualización (ggplot2, dplyr)
-library(skimr)     # Excelente para describir variables rápidamente
-library(corrplot)  # Para la matriz de correlación
+# Carga de librerías necesarias para manipulación, visualización y análisis
+library(tidyverse)
+library(skimr)
+library(corrplot)
 library(ggplot2)
 library(patchwork)
 library(dplyr)
-library(tidyverse)
 library(factoextra)
 library(NbClust)
 library(cluster)
 ```
 
 ## Datos
-```{r dartos}
+```{r datos}
 # 1. Cargar el conjunto de datos
 # Asegúrate de que listings.RData esté en la misma carpeta que tu proyecto
 load("listings.RData")
@@ -38,89 +37,40 @@ df <- listings
 
 ## Descripción de las Variables
 ```{r descripcion}
-# 2. Descripción general de las variables
+# Descripción univariada de las variables del conjunto de datos
 skim(df)
 ```
-Variables Cuantitativas
-host_listings_count: Cantidad de propiedades que el anfitrión tiene listadas en total.
 
-host_total_listings_count: Número total histórico de anuncios manejados por el anfitrión.
+A continuación se presenta el diccionario de variables del conjunto de datos, necesario para la interpretación del análisis exploratorio y la construcción de modelos predictivos.
 
-latitude: Coordenada geográfica de latitud para ubicar la propiedad en el mapa.
+**Variables cuantitativas**
 
-longitude: Coordenada geográfica de longitud para ubicar la propiedad en el mapa.
+- *host_listings_count*: Número total de propiedades listadas por el anfitrión.
+- *host_total_listings_count*: Número histórico total de anuncios gestionados por el anfitrión.
+- *latitude* / *longitude*: Coordenadas geográficas de la propiedad.
+- *accommodates*: Capacidad máxima de huéspedes de la vivienda.
+- *bathrooms*: Número de baños del alojamiento.
+- *bedrooms*: Número de habitaciones destinadas a dormitorios.
+- *beds*: Número total de camas disponibles.
+- *price*: Variable respuesta; costo por noche del alquiler (USD).
+- *minimum_nights* / *maximum_nights*: Límites mínimo y máximo de noches por reserva.
+- *availability_365*: Días disponibles para alquiler en el año.
+- *availability_eoy*: Días disponibles hasta fin del año en curso.
+- *number_of_reviews*, *number_of_reviews_ltm*, *number_of_reviews_l30d*, *number_of_reviews_ly*: Conteos de reseñas (total, últimos 12 meses, últimos 30 días, último año).
+- *estimated_occupancy_l365d*: Estimación de días ocupados en el último año.
+- *review_scores_rating*: Calificación global promedio; *review_scores_accuracy*, *cleanliness*, *checkin*, *communication*, *location*, *value*: subescalas de evaluación.
+- *calculated_host_listings_count* y variantes (*entire_homes*, *private_rooms*, *shared_rooms*): Conteos de listados del anfitrión por tipo.
+- *reviews_per_month*: Promedio mensual histórico de reseñas.
 
-accommodates: Número máximo de huéspedes que caben cómodamente en la vivienda.
+**Variables cualitativas (categóricas o texto)**
 
-bathrooms: Cantidad de baños disponibles en el alojamiento.
+- *room_type*: Modalidad de alquiler (vivienda completa, habitación privada, habitación compartida).
+- *property_type*: Tipo de inmueble (apartamento, casa, cabaña, etc.).
+- *neighbourhood_cleansed*: Barrio o zona oficial de ubicación.
+- *host_is_superhost*, *has_availability*, *instant_bookable*: Indicadores lógicos (estatus de anfitrión, disponibilidad actual, reserva instantánea).
+- *amenities*: Texto con comodidades ofrecidas.
 
-bedrooms: Número de habitaciones separadas diseñadas para dormir.
-
-beds: Total de camas físicas disponibles para los huéspedes.
-
-price: Costo por noche del alquiler de la vivienda (tu variable respuesta).
-
-minimum_nights: Cantidad mínima de noches que un huésped debe reservar.
-
-maximum_nights: Límite máximo de noches permitidas para una sola reserva.
-
-availability_365: Días que la propiedad está disponible para alquilar en el transcurso de un año.
-
-availability_eoy: Días disponibles para reservar hasta el final del año en curso.
-
-number_of_reviews: Total de comentarios y evaluaciones dejados por huéspedes anteriores.
-
-number_of_reviews_ltm: Cantidad de evaluaciones recibidas en los últimos doce meses.
-
-number_of_reviews_l30d: Cantidad de evaluaciones recibidas durante el último mes.
-
-number_of_reviews_ly: Cantidad de evaluaciones que la propiedad recibió el año pasado.
-
-estimated_occupancy_l365d: Estimación de los días que el lugar estuvo ocupado en el último año.
-
-review_scores_rating: Calificación general promedio dada por los huéspedes.
-
-review_scores_accuracy: Puntuación sobre qué tan veraz era la descripción del anuncio.
-
-review_scores_cleanliness: Puntuación otorgada por los huéspedes sobre la limpieza del alojamiento.
-
-review_scores_checkin: Puntuación sobre la facilidad para la entrega de llaves e ingreso.
-
-review_scores_communication: Puntuación sobre la atención y rapidez de respuesta del anfitrión.
-
-review_scores_location: Puntuación sobre la conveniencia y seguridad del vecindario.
-
-review_scores_value: Puntuación sobre la relación calidad y precio del alojamiento.
-
-calculated_host_listings_count: Total de anuncios activos del mismo anfitrión en esta ciudad específica.
-
-calculated_host_listings_count_entire_homes: Cantidad de casas o departamentos enteros listados por el anfitrión.
-
-calculated_host_listings_count_private_rooms: Cantidad de habitaciones privadas listadas por el anfitrión.
-
-calculated_host_listings_count_shared_rooms: Cantidad de habitaciones compartidas listadas por el anfitrión.
-
-reviews_per_month: Promedio mensual de reseñas que recibe la propiedad históricamente.
-
-
-
-Variables Cualitativas (Categóricas o Texto)
-room_type: Indica si el alquiler es una casa entera, una habitación privada o una habitación compartida.
-
-property_type: Describe el tipo específico de edificación del alojamiento, como apartamento, casa o cabaña.
-
-neighbourhood_cleansed: Nombre oficial del barrio o zona específica donde se ubica la propiedad.
-
-host_is_superhost: Indica con un verdadero o falso si el dueño tiene estatus de anfitrión destacado en la plataforma.
-
-has_availability: Confirma con un verdadero o falso si el lugar puede recibir reservas actualmente.
-
-instant_bookable: Muestra con un verdadero o falso si la reservación se confirma automáticamente sin esperar aprobación.
-
-amenities: Lista de texto que detalla las comodidades incluidas como internet, piscina o parqueo.
-
-
-Se decidió eliminar estas variables del modelo (id, scrape_id y host_id) ya que no aportan valor explicativo ni predictivo sobre el precio de una vivienda, siendo únicamente códigos internos. Además, para evitar problemas de multicolinealidad en los futuros modelos de regresión, se conservarán únicamente las métricas globales como minimum_nights, maximum_nights y availability_365, descartando las subdivisiones a menos que el análisis de correlación posterior demuestre lo contrario.
+**Criterios de exclusión de variables para el modelo.** Se excluyeron los identificadores *id*, *scrape_id* y *host_id* por carecer de valor explicativo o predictivo sobre el precio. Para reducir el riesgo de multicolinealidad en los modelos de regresión, se retuvieron únicamente las métricas globales de noches y disponibilidad (*minimum_nights*, *maximum_nights*, *availability_365*), descartando subdivisiones redundantes salvo que el análisis de correlación posterior lo justifique.
 
 ## Limpiar nuestros datos
 ```{r limpieza}
@@ -152,8 +102,9 @@ df_clean <- df_clean %>%
 dim(df_clean)
 ```
 
+### Preprocesamiento
 
-Al tener 76,554 filas en tu dataset limpio df_clean, nos enfrentamos a un reto técnico importante: funciones como el Estadístico de Hopkins, NbClust y el análisis de Silueta calculan matrices de distancia. Hacer una matriz de distancia de 76,000 x 76,000 colapsaría la memoria RAM de nuestrasu computadoras, para solucionar esto de forma profesional y estadísticamente válida, extraeremos una muestra representativa (3,000 registros) exclusivamente para hacer las pruebas de viabilidad (Hopkins, NbClust y Silueta). Luego, el algoritmo K-means final sí se lo aplicaremos a los 76,554 datos completos
+El preprocesamiento se estructuró en cuatro ejes. (1) **Exclusión de variables:** Se eliminaron identificadores sin valor predictivo (*id*, *scrape_id*, *host_id*); agregados redundantes de noches y disponibilidad (*minimum_minimum_nights*, *maximum_minimum_nights*, *availability_30/60/90*, etc.), conservando las métricas globales; y *estimated_revenue_l365d* por exceso de valores nulos y riesgo de data leakage respecto a la variable respuesta. (2) **Exclusión de registros:** Se eliminaron filas con valores faltantes en variables estructurales esenciales (*price*, *accommodates*, *bedrooms*, *bathrooms*, *beds*) y, tras transformar *price*, las filas con precio ausente o no positivo. (3) **Transformación de la variable respuesta:** La variable *price* se estandarizó eliminando símbolos monetarios y comas y convirtiéndola a tipo numérico para permitir modelado y correlaciones. (4) **Estrategia de muestreo para clustering:** Dado que el conjunto limpio supera las 76.000 filas, el cálculo de matrices de distancia completas (p. ej. para el estadístico de Hopkins, NbClust o el coeficiente de silueta) excedería la capacidad de memoria disponible. Por ello se extrajo una muestra aleatoria de 3.000 registros para las pruebas de viabilidad del agrupamiento (Hopkins, número óptimo de clusters, silueta); el algoritmo K-means final se aplicó al conjunto completo ya normalizado para obtener las asignaciones de cluster en todo el dataset.
 
 ```{r limpieza variable price}
 # Quitamos el símbolo de dólar y las comas, y convertimos a número
@@ -169,8 +120,8 @@ class(df_clean$price)
 
 ## Análisis de Distribución de la Variable Respuesta
 ```{r}
-# El objetivo final es predecir los precios de las casas[cite: 37].
-# Gráfica 1: Histograma normal
+# La variable respuesta es el precio por noche; objetivo: predicción en etapas posteriores.
+# Gráfica 1: Histograma en escala original
 g1 <- ggplot(df_clean, aes(x = price)) +
   geom_histogram(fill = "steelblue", bins = 50, color = "white") +
   theme_minimal() +
@@ -185,13 +136,32 @@ g2 <- ggplot(df_clean, aes(x = price)) +
   labs(title = "Distribución de Precios (Log10)",
        x = "Precio ($) - Escala Log", y = "Frecuencia")
 
-g1 + g2 # Muestra ambas gráficas juntas si usas patchwork, sino córrelas separadas
+g1 + g2
 ```
 
-Al analizar la distribución de los precios de los alojamientos, notamos que la gráfica inicial muestra que la gran mayoría de las propiedades tienen precios bajos o medios, mientras que existe un grupo pequeño de propiedades extremadamente caras que alargan la gráfica hacia la derecha. Como los modelos que construiremos más adelante asumen que los datos tienen una forma equilibrada, aplicamos una transformación matemática (logaritmo) a los precios. Esto ayudó a que los datos se distribuyan con una forma mucho más parecida a una campana tradicional, lo cual facilitará las predicciones del modelo
+La distribución de la variable respuesta *price* presenta asimetría derecha: la mayor parte de las observaciones se concentran en el rango de precios bajos y medios, con una cola derecha extendida por propiedades de precio elevado. Dado que los modelos de regresión lineal suelen asumir aproximación a la normalidad de la variable dependiente (o de sus residuos), se evaluó la transformación logarítmica; en escala log10 la distribución se aproxima mejor a una forma unimodal y simétrica, lo que favorece el cumplimiento de supuestos y la estabilidad de las estimaciones en etapas posteriores.
+
+### Pruebas de normalidad
+
+```{r normalidad}
+# Prueba de Shapiro-Wilk sobre muestra (limitación del test para n grande)
+set.seed(456)
+n_muestra_norm <- 5000
+idx_norm <- sample(1:nrow(df_clean), min(n_muestra_norm, nrow(df_clean)))
+precio_muestra <- df_clean$price[idx_norm]
+precio_log_muestra <- log10(df_clean$price[idx_norm])
+
+shapiro_price <- shapiro.test(precio_muestra)
+shapiro_log   <- shapiro.test(precio_log_muestra)
+
+print(shapiro_price)
+print(shapiro_log)
+```
+
+En la escala original, la prueba de Shapiro-Wilk rechaza la hipótesis nula de normalidad (p < 0,05), coherente con la asimetría observada. Tras la transformación logarítmica, la distribución de *log(price)* se acerca más a la normalidad; no obstante, en muestras grandes incluso desviaciones moderadas suelen llevar al rechazo del test. La conclusión operativa es que, para el modelado de regresión, resulta preferible utilizar *price* en escala logarítmica cuando se busque mayor aproximación a los supuestos de normalidad de los residuos y estabilidad de la varianza; en el análisis exploratorio se mantiene la inspección visual de ambas escalas.
 
 
-## Matriz de correlacion 
+## Matriz de correlación
 ```{r}
 # -----------------------------
 # MATRIZ DE CORRELACIÓN
@@ -223,7 +193,7 @@ corrplot(corr_matrix,
          number.cex = 0.7)
 ```
 
-## Relacion de precios
+## Relación de la variable respuesta con los predictores
 
 ```{r}
 #Precio vs Capacidad de Huéspedes
@@ -278,9 +248,9 @@ ggplot(df_clean, aes(x = review_scores_rating, y = price)) +
   )
 ```
 
-Para analizar la relación entre el precio y otras características del alojamiento, se construyó una matriz de correlación utilizando variables numéricas relevantes como capacidad de huéspedes, número de habitaciones, número de baños y cantidad de reseñas. Los resultados permiten identificar qué variables presentan una relación más fuerte con el precio.
+La matriz de correlación permite cuantificar las asociaciones lineales entre la variable respuesta (*price*) y un conjunto de predictores numéricos candidatos (capacidad, habitaciones, baños, camas, reseñas, calificación, disponibilidad y mínimo de noches). Los coeficientes obtenidos orientan la selección de variables y alertan sobre posibles redundancias antes de ajustar modelos de regresión múltiple.
 
-Además, se generaron gráficos que muestran la relación entre el precio y diferentes variables explicativas. En general, se observa que propiedades con mayor capacidad de huéspedes y mayor número de habitaciones tienden a tener precios más altos. También se observa que los alojamientos tipo vivienda completa suelen presentar precios mayores en comparación con habitaciones privadas o compartidas. Estas visualizaciones ayudan a comprender los factores que influyen en la variación del precio de los alojamientos.
+Los gráficos bivariados complementan dicho análisis: se observa una relación positiva entre el precio y la capacidad de huéspedes (*accommodates*) y el número de habitaciones (*bedrooms*), coherente con la hipótesis de que la oferta de espacio condiciona el precio. La variable categórica *room_type* muestra una clara heterogeneidad en la distribución del precio: los alojamientos de vivienda completa presentan medianas y dispersiones superiores a las de habitaciones privadas o compartidas. La relación entre *review_scores_rating* y precio es más tenue en términos lineales, lo que sugiere que la calificación podría actuar como moderador o requerir especificaciones no lineales en modelos posteriores. En conjunto, estos hallazgos fundamentan la inclusión de variables estructurales y de tipo de alojamiento como predictores prioritarios para la predicción del precio.
 
 
 
@@ -344,13 +314,9 @@ fviz_silhouette(sil) +
   labs(title = "Análisis de Silueta para Evaluar el Clustering")
 ```
 
-Como parte del análisis exploratorio, agrupamos las propiedades para encontrar patrones en los datos. Seleccionamos variables importantes como el precio, la capacidad de la vivienda y la cantidad de reseñas, y normalizamos estos valores para que todos tuvieran el mismo peso al momento de compararlos. Debido a la gran cantidad de datos, utilizamos una muestra de 3,000 propiedades para realizar las pruebas de evaluación sin saturar la memoria.
+Como parte del análisis exploratorio se aplicó agrupamiento no supervisado (K-means) para identificar perfiles homogéneos en el conjunto de propiedades. Se seleccionaron variables de capacidad estructural (precio, accommodates, bedrooms, bathrooms, beds) y de popularidad (number_of_reviews), normalizadas mediante estandarización (media 0, desviación típica 1) para evitar que las diferencias de escala dominen la métrica de distancia. La viabilidad del clustering se evaluó en una muestra de 3.000 registros (estadístico de Hopkins, método de la silueta para elegir *k*); el número óptimo de clusters resultó ser 2, y el K-means se ajustó al conjunto completo para obtener las asignaciones definitivas.
 
-Utilizamos el método de la silueta para evaluar cuál era la cantidad ideal de divisiones, y los resultados nos sugirieron que la mejor opción era formar 2 grupos. Al aplicar el algoritmo de agrupamiento (K-means) con esta cantidad, obtuvimos los siguientes resultados en nuestra muestra:
-
- * Grupo 1: Quedó conformado por 584 propiedades. Obtuvo una calificación de silueta de 0.26, lo que indica que estas casas comparten ciertas características, pero sus perfiles son un poco variados y el grupo es más disperso.
-
-* Grupo 2: Es el grupo mayoritario, reuniendo a 2,416 propiedades. Su calificación de silueta fue de 0.51, lo que significa que estas viviendas son mucho más similares entre sí y forman un conjunto bastante bien definido.
+En la muestra de evaluación, el grupo minoritario (cluster 1, *n* ≈ 584) presenta un coeficiente de silueta de aproximadamente 0,26, indicando cohesión moderada y cierto solapamiento con el otro grupo; el grupo mayoritario (cluster 2, *n* ≈ 2.416) alcanza una silueta de aproximadamente 0,51, lo que refleja una estructura más compacta y mejor separación. La interpretación de estos dos clusters se detalla a continuación a partir de los promedios por grupo.
 
 
 ```{r Resumen de las características}
@@ -364,8 +330,4 @@ df_clean %>%
   )
 ```
 
-Para entender qué tipo de viviendas componen cada grupo, calculamos los promedios de sus características principales.
-
-* El Grupo 2, al ser el más grande, representa el mercado general o estándar de Airbnb: son propiedades más pequeñas y económicas, con una capacidad promedio para casi 4 personas (3.7) y un precio medio aproximado de $608 por noche. Al ser opciones más accesibles, tienen una mayor rotación de huéspedes, lo cual se refleja en su promedio más alto de reseñas (58.37).
-
-* El Grupo 1, en cambio, agrupa las propiedades de mayor tamaño y exclusividad. Se trata de viviendas diseñadas para familias o grupos grandes, con una capacidad promedio de más de 9 personas y un precio considerablemente más alto, superando los $1,300 por noche. Debido a que este tipo de propiedades requieren un mayor presupuesto, se reservan con menor frecuencia, lo que explica que tengan una cantidad menor de reseñas en promedio (39.7).
+El resumen por cluster (precio medio, capacidad media, reseñas medias) permite caracterizar los perfiles obtenidos. El **cluster 2** (mayoritario) concentra propiedades de menor capacidad y precio más bajo (capacidad media cercana a 4 huéspedes, precio medio en torno a 608 USD/noche) y un volumen de reseñas mayor, coherente con una mayor rotación y un segmento más estándar del mercado. El **cluster 1** (minoritario) agrupa propiedades de mayor capacidad y precio notablemente superior (capacidad media superior a 9 huéspedes, precio medio por encima de 1.300 USD/noche), con menor número medio de reseñas, lo que es consistente con un segmento de alojamientos de mayor exclusividad y menor frecuencia de ocupación. Esta partición en dos perfiles (estándar vs. premium) resulta útil para el análisis exploratorio y puede informar estrategias de modelado diferenciadas o variables categóricas derivadas en la entrega final.
