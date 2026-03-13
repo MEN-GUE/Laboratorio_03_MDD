@@ -15,6 +15,13 @@ knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse) # Para manipulación y visualización (ggplot2, dplyr)
 library(skimr)     # Excelente para describir variables rápidamente
 library(corrplot)  # Para la matriz de correlación
+library(ggplot2)
+library(patchwork)
+library(dplyr)
+library(tidyverse)
+library(factoextra)
+library(NbClust)
+library(cluster)
 ```
 
 ## Datos
@@ -146,5 +153,125 @@ dim(df_clean)
 ```
 
 
+Al tener 76,554 filas en tu dataset limpio df_clean, nos enfrentamos a un reto técnico importante: funciones como el Estadístico de Hopkins, NbClust y el análisis de Silueta calculan matrices de distancia. Hacer una matriz de distancia de 76,000 x 76,000 colapsaría la memoria RAM de nuestrasu computadoras, para solucionar esto de forma profesional y estadísticamente válida, extraeremos una muestra representativa (3,000 registros) exclusivamente para hacer las pruebas de viabilidad (Hopkins, NbClust y Silueta). Luego, el algoritmo K-means final sí se lo aplicaremos a los 76,554 datos completos
+
+```{r limpieza variable price}
+# Quitamos el símbolo de dólar y las comas, y convertimos a número
+df_clean <- df_clean %>%
+  mutate(price = as.numeric(gsub("[\\$,]", "", price))) %>%
+  # Eliminamos cualquier fila donde el precio haya quedado vacío o en cero
+  filter(!is.na(price) & price > 0) 
+
+# Verificamos que ahora sí sea numérica (debería decir "numeric" o "double")
+class(df_clean$price)
+```
 
 
+## Análisis de Distribución de la Variable Respuesta
+```{r}
+# El objetivo final es predecir los precios de las casas[cite: 37].
+# Gráfica 1: Histograma normal
+g1 <- ggplot(df_clean, aes(x = price)) +
+  geom_histogram(fill = "steelblue", bins = 50, color = "white") +
+  theme_minimal() +
+  labs(title = "Distribución de los Precios",
+       x = "Precio ($)", y = "Frecuencia")
+
+# Gráfica 2: Histograma con transformación Logarítmica
+g2 <- ggplot(df_clean, aes(x = price)) +
+  geom_histogram(fill = "darkorange", bins = 50, color = "white") +
+  scale_x_log10() + # Aplicamos logaritmo en el eje X
+  theme_minimal() +
+  labs(title = "Distribución de Precios (Log10)",
+       x = "Precio ($) - Escala Log", y = "Frecuencia")
+
+g1 + g2 # Muestra ambas gráficas juntas si usas patchwork, sino córrelas separadas
+```
+
+Al analizar la distribución de los precios de los alojamientos, notamos que la gráfica inicial muestra que la gran mayoría de las propiedades tienen precios bajos o medios, mientras que existe un grupo pequeño de propiedades extremadamente caras que alargan la gráfica hacia la derecha. Como los modelos que construiremos más adelante asumen que los datos tienen una forma equilibrada, aplicamos una transformación matemática (logaritmo) a los precios. Esto ayudó a que los datos se distribuyan con una forma mucho más parecida a una campana tradicional, lo cual facilitará las predicciones del modelo
+
+## Clustering
+```{r}
+# --- CHUNK 2: CLUSTERING ---
+
+
+# 1. Selección de variables y NORMALIZACIÓN
+# Seleccionamos variables clave de capacidad estructural, popularidad y precio.
+# scale() normaliza los datos (media 0, desviación estándar 1) para que 
+# las diferencias de escala (ej. precio vs número de camas) no sesguen el cálculo de distancias.
+df_num <- df_clean %>% 
+  select(price, accommodates, bedrooms, bathrooms, beds, number_of_reviews) %>% 
+  scale() %>% 
+  as.data.frame()
+
+# 2. Muestreo para evitar colapso de memoria en matrices de distancia
+set.seed(123)
+muestra_idx <- sample(1:nrow(df_num), 3000)
+df_muestra <- df_num[muestra_idx, ]
+
+# 3. Estadístico de Hopkins
+# Usamos la muestra. Un valor cercano a 1 indica alta tendencia de agrupamiento.
+hopkins_stat <- get_clust_tendency(df_muestra, n = nrow(df_muestra)-1, graph = FALSE)
+print(paste("Estadístico de Hopkins:", round(hopkins_stat$hopkins_stat, 3)))
+
+# 4. Determinación del número óptimo de clusters
+# Usaremos factoextra directamente para evitar el bug interno de NbClust en R > 4.0
+
+# Generamos la gráfica con el método de la Silueta
+fviz_nbclust(df_muestra, FUNcluster = kmeans, method = "silhouette") +
+  theme_minimal() +
+  labs(title = "Número óptimo de clusters (Método de la Silueta)")
+
+# (Nota para el informe: Observa en la gráfica cuál es el número en el eje X 
+# donde la línea alcanza su punto más alto. Ese es tu k_optimo).
+
+# 5. Aplicar K-means al DATASET COMPLETO (76,554 filas)
+# Ajusta este número basado en lo que te sugiera la gráfica generada en el paso anterior.
+# Frecuentemente en Airbnb suele ser 2 o 3.
+k_optimo <- 2 
+set.seed(123)
+km_res <- kmeans(df_num, centers = k_optimo, nstart = 25)
+
+# Añadimos el cluster al dataframe limpio original para futuras referencias
+df_clean$cluster <- as.factor(km_res$cluster)
+
+# 6. Visualización de los Clusters
+# Se proyectan los datos multivariados en 2 dimensiones para poder graficarlos
+fviz_cluster(km_res, data = df_num, geom = "point",
+             ellipse.type = "convex", alpha = 0.2,
+             main = "Visualización de Clusters mediante PCA (2 Dimensiones)") +
+  theme_minimal()
+
+# 7. Análisis del éxito: Coeficiente de Silueta
+# Lo aplicamos a la muestra. Valores positivos y cercanos a 1 indican que el elemento está bien agrupado.
+sil <- silhouette(km_res$cluster[muestra_idx], dist(df_muestra))
+fviz_silhouette(sil) + 
+  theme_minimal() +
+  labs(title = "Análisis de Silueta para Evaluar el Clustering")
+```
+
+Como parte del análisis exploratorio, agrupamos las propiedades para encontrar patrones en los datos. Seleccionamos variables importantes como el precio, la capacidad de la vivienda y la cantidad de reseñas, y normalizamos estos valores para que todos tuvieran el mismo peso al momento de compararlos. Debido a la gran cantidad de datos, utilizamos una muestra de 3,000 propiedades para realizar las pruebas de evaluación sin saturar la memoria.
+
+Utilizamos el método de la silueta para evaluar cuál era la cantidad ideal de divisiones, y los resultados nos sugirieron que la mejor opción era formar 2 grupos. Al aplicar el algoritmo de agrupamiento (K-means) con esta cantidad, obtuvimos los siguientes resultados en nuestra muestra:
+
+ * Grupo 1: Quedó conformado por 584 propiedades. Obtuvo una calificación de silueta de 0.26, lo que indica que estas casas comparten ciertas características, pero sus perfiles son un poco variados y el grupo es más disperso.
+
+* Grupo 2: Es el grupo mayoritario, reuniendo a 2,416 propiedades. Su calificación de silueta fue de 0.51, lo que significa que estas viviendas son mucho más similares entre sí y forman un conjunto bastante bien definido.
+
+
+```{r Resumen de las características}
+
+df_clean %>%
+  group_by(cluster) %>%
+  summarise(
+    precio_promedio = mean(price),
+    capacidad_promedio = mean(accommodates),
+    reviews_promedio = mean(number_of_reviews)
+  )
+```
+
+Para entender qué tipo de viviendas componen cada grupo, calculamos los promedios de sus características principales.
+
+* El Grupo 2, al ser el más grande, representa el mercado general o estándar de Airbnb: son propiedades más pequeñas y económicas, con una capacidad promedio para casi 4 personas (3.7) y un precio medio aproximado de $608 por noche. Al ser opciones más accesibles, tienen una mayor rotación de huéspedes, lo cual se refleja en su promedio más alto de reseñas (58.37).
+
+* El Grupo 1, en cambio, agrupa las propiedades de mayor tamaño y exclusividad. Se trata de viviendas diseñadas para familias o grupos grandes, con una capacidad promedio de más de 9 personas y un precio considerablemente más alto, superando los $1,300 por noche. Debido a que este tipo de propiedades requieren un mayor presupuesto, se reservan con menor frecuencia, lo que explica que tengan una cantidad menor de reseñas en promedio (39.7).
