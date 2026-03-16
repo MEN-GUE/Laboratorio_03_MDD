@@ -6,7 +6,7 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = FALSE)
 ```
 
 ## Librerías
@@ -451,4 +451,90 @@ Asimismo, al comparar los errores del conjunto de prueba y el de entrenamiento, 
 
 
 
+# Ejercicio 10: Modelo Óptimo y Análisis de Residuos
+```{r}
+# Creamos un modelo seleccionando solo los mejores predictores, 
+# evitando las variables redundantes (camas/habitaciones) e incluyendo el tipo de habitación.
+modelo_optimo <- lm(price ~ accommodates + bathrooms + number_of_reviews + room_type, data = train)
+
+# 1. Veamos el resumen para conocer el R cuadrado y la significancia de las variables
+summary(modelo_optimo)
+
+# 2. Análisis gráfico de los residuos para determinar la calidad del modelo
+par(mfrow = c(2, 2))
+plot(modelo_optimo)
+
+# 3. Restauramos la vista de las gráficas 
+par(mfrow = c(1, 1))
+```
+Para corregir la multicolinealidad detectada, construimos un modelo óptimo seleccionando únicamente las variables más determinantes y evitando redundancias: la capacidad total (accommodates), el número de baños, el tipo de habitación y la cantidad de reseñas.
+
+Al analizar el resumen del modelo, confirmamos que todas estas variables son estadísticamente significativas (p-value < 0.05). Por ejemplo, el modelo confirma numéricamente que las habitaciones privadas y compartidas reducen drásticamente el precio en comparación con una casa entera. Sin embargo, el R-cuadrado ajustado obtenido es de 0.15, indicando que este modelo lineal solo explica el 15% de la variabilidad del precio.
+
+Al observar los gráficos de residuos, notamos que los errores no se distribuyen de manera perfectamente aleatoria, especialmente en los extremos, lo que indica que aún existen valores atípicos (propiedades excesivamente caras) que el modelo lineal estándar no logra capturar bien.
+
+# Ejercicio 11: Modelo con Regularización (Lasso)
+```{r}
+library(glmnet)
+
+# Preparar datos de entrenamiento
+x_train <- model.matrix(price ~ accommodates + bathrooms + number_of_reviews + room_type, data = train)[, -1]
+y_train <- train$price
+
+# Preparar datos de prueba
+x_test <- model.matrix(price ~ accommodates + bathrooms + number_of_reviews + room_type, data = test)[, -1]
+y_test <- test$price
+
+# Entrenar el modelo Lasso (alpha = 1) usando validación cruzada para encontrar el mejor lambda
+set.seed(123)
+modelo_lasso <- cv.glmnet(x_train, y_train, alpha = 1)
+
+# Ver el mejor valor de penalización (lambda)
+cat("El mejor valor de lambda encontrado es:", modelo_lasso$lambda.min, "\n")
+
+# Predicción con el modelo Lasso usando el mejor lambda
+pred_lasso <- predict(modelo_lasso, s = "lambda.min", newx = x_test)
+
+# Calcular el Error Cuadrático Medio (MSE) del modelo Lasso
+mse_lasso <- mean((y_test - pred_lasso)^2)
+cat("Error Cuadrático Medio (MSE) Lasso:", mse_lasso, "\n")
+```
+Para evitar el sobreajuste y mejorar la capacidad de generalización, aplicamos el algoritmo de regularización Lasso. Este método penaliza las variables menos útiles llevándolas a cero, dejándonos solo con las más importantes. Tras aplicar validación cruzada, el algoritmo determinó que el nivel de penalización óptimo (lambda) era de 6.71. Al evaluar este modelo con nuestros datos de prueba, obtuvimos un Error Cuadrático Medio (MSE) de 13,320,844
+
+# Ejercicios 12 y 13: Comparación de Modelos
+```{r}
+# Primero, calculamos el MSE del modelo óptimo (Punto 10) con los datos de prueba
+pred_optimo <- predict(modelo_optimo, newdata = test)
+mse_optimo <- mean((test$price - pred_optimo)^2, na.rm = TRUE)
+
+# Creamos una tabla resumen con todos los resultados obtenidos
+# Asegúrate de que mse_uni y mse_test sigan en tu entorno (fueron creados en los Puntos 7 y 8)
+resultados_comparativos <- data.frame(
+  Modelo = c("Univariado", "Multivariado (Completo)", "Multivariado (Óptimo)", "Lasso"),
+  MSE = c(mse_uni, mse_test, mse_optimo, mse_lasso)
+)
+
+print(resultados_comparativos)
+
+# Gráfico comparativo de la efectividad de los modelos
+library(ggplot2)
+
+ggplot(resultados_comparativos, aes(x = reorder(Modelo, MSE), y = MSE, fill = Modelo)) +
+  geom_bar(stat = "identity", color = "black") +
+  theme_minimal() +
+  labs(title = "Comparación de Errores (MSE) entre Modelos",
+       subtitle = "Menor error indica un mejor desempeño",
+       x = "Tipo de Modelo",
+       y = "Error Cuadrático Medio (MSE)") +
+  theme(axis.text.x = element_text(angle = 15, hjust = 1),
+        legend.position = "none")
+```
+Para determinar la eficiencia de nuestros algoritmos, utilizamos el Error Cuadrático Medio (MSE) como métrica principal, la cual mide qué tan alejadas estuvieron nuestras predicciones de los precios reales en el conjunto de prueba. Los resultados muestran que el modelo Univariado tuvo el error más alto (18,807,595), lo cual era de esperarse al depender de una sola característica. El modelo Multivariado Completo mejoró ligeramente el desempeño (17,893,525), pero seguía afectado por información redundante.
+
+# Discusión y Selección del Mejor Modelo:
+Los mejores resultados se concentraron en los dos últimos modelos. El modelo Lasso logró reducir drásticamente el error a 13,320,844 al penalizar y descartar automáticamente las variables menos útiles. Sin embargo, el modelo Multivariado Óptimo (donde seleccionamos manualmente la capacidad, baños, cantidad de reseñas y tipo de habitación tras analizar la multicolinealidad) fue el ganador absoluto con el error más bajo de todos: 13,318,980.
+
+En conclusión, para cumplir con el objetivo de SmartStay Advisors de estimar precios competitivos , la elección del mejor algoritmo predictivo recae en el modelo Multivariado Óptimo. Demostramos que una selección de variables fundamentada en el análisis exploratorio puede igualar o incluso superar a técnicas automáticas de regularización.
+
+Como recomendación final para la consultoría, es importante destacar que los precios de los alojamientos en plataformas como Airbnb no siempre siguen un comportamiento estrictamente lineal. Aunque logramos reducir el error significativamente, para futuras implementaciones se sugiere explorar algoritmos no lineales (como árboles de decisión) que puedan capturar mejor el impacto de los barrios específicos y la estacionalidad para lograr estimaciones aún más precisas.
 
