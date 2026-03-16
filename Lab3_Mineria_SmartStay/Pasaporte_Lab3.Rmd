@@ -331,3 +331,124 @@ df_clean %>%
 ```
 
 El resumen por cluster (precio medio, capacidad media, reseñas medias) permite caracterizar los perfiles obtenidos. El **cluster 2** (mayoritario) concentra propiedades de menor capacidad y precio más bajo (capacidad media cercana a 4 huéspedes, precio medio en torno a 608 USD/noche) y un volumen de reseñas mayor, coherente con una mayor rotación y un segmento más estándar del mercado. El **cluster 1** (minoritario) agrupa propiedades de mayor capacidad y precio notablemente superior (capacidad media superior a 9 huéspedes, precio medio por encima de 1.300 USD/noche), con menor número medio de reseñas, lo que es consistente con un segmento de alojamientos de mayor exclusividad y menor frecuencia de ocupación. Esta partición en dos perfiles (estándar vs. premium) resulta útil para el análisis exploratorio y puede informar estrategias de modelado diferenciadas o variables categóricas derivadas en la entrega final.
+
+
+# Ejercicio 6: División de los datos (Entrenamiento y Prueba)
+```{r division_datos}
+# Fijamos una semilla para asegurar que la división sea reproducible
+set.seed(123)
+
+# Utilizamos nuestra base de datos limpia (df_clean)
+n <- nrow(df_clean)
+
+# Seleccionamos el 70% de los datos para entrenamiento
+train_index <- sample(1:n, size = 0.7 * n)
+
+train <- df_clean[train_index, ]
+test  <- df_clean[-train_index, ]
+
+# Verificamos las dimensiones
+dim(train)
+dim(test)
+```
+
+Conclusión del Ejercicio 6: Dividimos nuestra base de datos limpia en dos conjuntos: un 70% de las filas se utilizará para entrenar a nuestro modelo, y el 30% restante servirá como prueba para evaluar su capacidad de predicción. Fijamos una semilla inicial para garantizar que esta división aleatoria sea exactamente la misma cada vez que se ejecute el código, asegurando la reproducibilidad de la investigación.
+
+# Ejercicio 7: Modelo Univariado de Regresión Lineal
+```{r}
+# Usaremos la capacidad de la vivienda (accommodates) para predecir el precio
+modelo_uni <- lm(price ~ accommodates, data = train)
+
+# Resumen estadístico del modelo
+summary(modelo_uni)
+
+# Visualización de la relación y la línea de tendencia
+plot(train$accommodates, train$price,
+     main = "Relación entre Precio y Capacidad",
+     xlab = "Número máximo de huéspedes (accommodates)",
+     ylab = "Precio ($)")
+abline(modelo_uni, col = "red", lwd = 2)
+
+# Análisis visual de residuos
+par(mfrow = c(2, 2))
+plot(modelo_uni)
+
+# Predicción y cálculo de error (MSE)
+pred_uni <- predict(modelo_uni, newdata = test)
+mse_uni <- mean((test$price - pred_uni)^2, na.rm = TRUE)
+print(paste("Error Cuadrático Medio (MSE) Univariado:", round(mse_uni, 2)))
+```
+Elegimos la capacidad de huéspedes de la propiedad como variable principal para crear nuestro primer modelo simple. Al analizar los resultados y la gráfica, confirmamos la tendencia lógica: a mayor capacidad, el precio se incrementa. Evaluamos el error de esta predicción (MSE) para tener una línea base de comparación antes de avanzar a modelos más complejos.
+
+# Ejercicio 8: Modelo Multivariado de Regresión Lineal
+```{r}
+# Seleccionamos las variables numéricas más relevantes para el precio
+vars <- c("price", "accommodates", "bathrooms", "bedrooms", "beds",
+          "minimum_nights", "availability_365", "number_of_reviews")
+
+train_num <- train[, vars]
+test_num  <- test[, vars]
+
+# Eliminamos posibles valores nulos residuales por seguridad
+train_num <- na.omit(train_num)
+test_num  <- na.omit(test_num)
+
+# Creamos el modelo usando todas estas variables simultáneamente
+modelo_multi <- lm(price ~ ., data = train_num)
+summary(modelo_multi)
+
+# Realizamos las predicciones
+pred_multi <- predict(modelo_multi, newdata = test_num)
+
+# Comparamos el error de entrenamiento vs prueba
+mse_train <- mean(residuals(modelo_multi)^2)
+mse_test <- mean((test_num$price - pred_multi)^2)
+print(paste("MSE Entrenamiento:", round(mse_train, 2)))
+print(paste("MSE Prueba:", round(mse_test, 2)))
+
+# Gráfico comparativo de Predicción vs Realidad
+par(mfrow = c(1, 1)) # Restauramos la vista de la gráfica
+plot(test_num$price, pred_multi,
+     main = "Predicción vs Precio Real (Modelo Multivariado)",
+     xlab = "Precio Real",
+     ylab = "Precio Predicho")
+abline(0, 1, col = "red", lwd = 2)
+
+# Análisis de residuos
+par(mfrow = c(2, 2))
+plot(modelo_multi)
+```
+En este paso, el modelo tomó en cuenta múltiples características de infraestructura y popularidad a la vez para intentar estimar el precio de manera más precisa. Al comparar gráficamente la predicción con el precio real, observamos qué tanto se ajustan nuestros cálculos a la realidad. Además, calculamos los errores en ambas fases (entrenamiento y prueba) para evaluar el aprendizaje general del algoritmo
+
+# Ejercicio 9: Análisis del Modelo y Multicolinealidad
+```{r}
+library(car)
+library(corrplot)
+
+# Evaluamos la multicolinealidad usando el Factor de Inflación de Varianza (VIF)
+vif_values <- vif(modelo_multi)
+print(vif_values)
+
+# Visualizamos las redundancias mediante una matriz de correlación
+par(mfrow = c(1, 1))
+cor_matrix <- cor(train_num)
+corrplot(cor_matrix, method = "color", type = "upper", 
+         tl.col = "black", tl.srt = 45, addCoef.col = "black", number.cex = 0.7)
+
+# Modelo Reducido: Eliminamos variables redundantes detectadas
+modelo_reducido <- lm(price ~ accommodates + bathrooms + number_of_reviews + availability_365, 
+                      data = train_num)
+summary(modelo_reducido)
+
+# Evaluamos el desempeño del nuevo modelo más limpio
+pred_reducido <- predict(modelo_reducido, newdata = test_num)
+mse_reducido <- mean((test_num$price - pred_reducido)^2)
+print(paste("MSE Modelo Reducido:", round(mse_reducido, 2)))
+```
+Evaluamos si nuestro modelo contenía variables que aportaban información repetida (multicolinealidad). Al revisar las métricas y la matriz de correlación, notamos que características como el número de camas, las habitaciones y la capacidad total están altamente vinculadas entre sí, ya que esencialmente miden el mismo aspecto del tamaño de la vivienda
+
+Asimismo, al comparar los errores del conjunto de prueba y el de entrenamiento, notamos resultados bastante parecidos, lo que nos permite concluir que el modelo no sufre de un sobreajuste severo (overfitting). De todas formas, construimos un modelo reducido eliminando las variables que causaban redundancia para lograr una predicción más estable y limpia
+
+
+
+
