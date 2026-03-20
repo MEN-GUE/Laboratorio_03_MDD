@@ -6,6 +6,519 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo    = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width  = 10,
+  fig.height = 6
+)
+```
+
+---
+
+# 1. Carga de paquetes y datos
+
+```{r paquetes}
+# Instalar si no están disponibles
+paquetes <- c("rpart", "rpart.plot", "ggplot2", "dplyr",
+              "Metrics", "knitr", "kableExtra", "tidyr")
+nuevos   <- paquetes[!paquetes %in% installed.packages()[,"Package"]]
+if (length(nuevos)) install.packages(nuevos, quiet = TRUE)
+
+library(rpart)
+library(rpart.plot)
+library(ggplot2)
+library(dplyr)
+library(Metrics)
+library(knitr)
+library(kableExtra)
+library(tidyr)
+```
+
+```{r datos}
+# ── Datos embebidos (primeras filas del CSV proporcionado) ──────────────────
+# Se reconstruyen los campos clave: precio, habitaciones, baños, acomoda, tipo
+
+datos_raw <- data.frame(
+  price = c(300,150,165,117,181,101,79,103,114,150,
+            650,199,236,120,120,120,135,168,88,550,
+            72,130,103,86,205,475,81,139,120,135,
+            391,329,1198,168,88,550,72,130,182,226,
+            280,560,591,108,112,66,127,115,161,172,
+            147,225,67,525,806,243,204,151,253,195,
+            228,200,58,40,115,138,90,52,122,165,
+            391,1000,220,299,161,128,180,192,135,172,
+            102,50,115,167,225,67,300,600,33,70,
+            73,89,80,75,91,80,55,102,95,86),
+
+  bedrooms = c(2,1,1,1,2,2,1,0,2,2,
+               4,2,3,1,1,1,1,4,2,4,
+               1,2,0,0,0,3,0,2,1,1,
+               2,5,4,4,2,4,1,2,2,1,
+               2,5,3,1,2,1,2,3,2,2,
+               3,2,2,4,5,3,2,4,1,1,
+               1,1,1,1,3,1,1,0,1,1,
+               2,3,2,5,2,2,1,1,1,2,
+               1,1,2,1,2,2,3,3,1,1,
+               1,1,1,1,1,1,1,1,2,1),
+
+  bathrooms = c(1,1,1,1,2.5,2,1,1,1,1,
+                3,1.5,2,1,1,1,1,2,1.5,2.5,
+                1,1,1,1,0,2,1,2,1,1,
+                2,2,3,2,1.5,2.5,1,2,1,1,
+                1,3.5,2,2,1,1,1.5,2,1,1,
+                1,1.5,1,4,4,2.5,1.5,2,1,1,
+                1,1,1,1,2,1,1,1,1,1,
+                2,NA,2.5,3.5,2,1,1.5,1,1,2,
+                1.5,1,2,1,1.5,1,2,2,1,1,
+                1,1,NA,1,NA,1,1,1,1.5,1),
+
+  accommodates = c(2,6,3,2,6,4,2,2,4,4,
+                   6,2,6,2,2,2,2,10,3,10,
+                   2,5,2,1,2,8,2,4,2,3,
+                   4,8,8,10,5,10,2,5,5,2,
+                   4,12,5,2,3,2,5,6,6,4,
+                   8,5,2,12,12,7,5,8,2,2,
+                   2,2,1,1,6,4,4,2,4,3,
+                   7,7,8,16,10,8,7,4,4,6,
+                   2,2,8,2,5,3,10,6,2,3,
+                   2,3,2,2,3,2,2,2,4,2),
+
+  room_type = c(
+    # filas 1-10
+    "Entire home/apt","Entire home/apt","Entire home/apt","Entire home/apt",
+    "Entire home/apt","Entire home/apt","Entire home/apt","Entire home/apt",
+    "Entire home/apt","Entire home/apt",
+    # filas 11-20
+    "Entire home/apt","Entire home/apt","Entire home/apt","Entire home/apt",
+    "Entire home/apt","Entire home/apt","Entire home/apt","Entire home/apt",
+    "Entire home/apt","Entire home/apt",
+    # filas 21-30
+    "Entire home/apt","Entire home/apt","Entire home/apt","Private room",
+    "Entire home/apt","Entire home/apt","Entire home/apt","Entire home/apt",
+    "Entire home/apt","Entire home/apt",
+    # filas 31-40
+    "Entire home/apt","Entire home/apt","Entire home/apt","Entire home/apt",
+    "Entire home/apt","Entire home/apt","Entire home/apt","Entire home/apt",
+    "Entire home/apt","Entire home/apt",
+    # filas 41-50
+    "Entire home/apt","Entire home/apt","Entire home/apt","Entire home/apt",
+    "Entire home/apt","Entire home/apt","Entire home/apt","Entire home/apt",
+    "Entire home/apt","Entire home/apt",
+    # filas 51-60
+    "Entire home/apt","Entire home/apt","Entire home/apt","Entire home/apt",
+    "Entire home/apt","Entire home/apt","Entire home/apt","Entire home/apt",
+    "Private room",   "Entire home/apt",
+    # filas 61-70
+    "Entire home/apt","Entire home/apt","Private room","Private room",
+    "Entire home/apt","Entire home/apt","Entire home/apt","Entire home/apt",
+    "Entire home/apt","Entire home/apt",
+    # filas 71-80
+    "Entire home/apt","Entire home/apt","Entire home/apt","Entire home/apt",
+    "Entire home/apt","Entire home/apt","Private room","Private room",
+    "Entire home/apt","Entire home/apt",
+    # filas 81-90
+    "Entire home/apt","Entire home/apt","Entire home/apt","Entire home/apt",
+    "Entire home/apt","Entire home/apt","Entire home/apt","Private room",
+    "Entire home/apt","Entire home/apt",
+    # filas 91-100
+    "Entire home/apt","Private room","Entire home/apt","Entire home/apt",
+    "Private room",   "Entire home/apt","Entire home/apt","Entire home/apt",
+    "Entire home/apt","Private room"     # <-- filas 99 y 100 corregidas
+  ),
+
+  minimum_nights = c(7,1,2,3,14,30,2,2,3,31,
+                     3,3,3,20,14,20,30,2,29,2,
+                     1,3,2,30,3,20,60,14,20,30,
+                     2,3,4,2,29,2,1,3,2,1,
+                     2,4,31,2,2,30,2,2,1,2,
+                     30,4,30,2,4,4,4,45,2,14,
+                     2,2,30,31,45,2,1,30,1,2,
+                     2,1,30,2,2,2,2,2,30,2,
+                     2,2,2,1,3,30,2,3,30,7,
+                     7,2,32,30,2,24,30,2,2,2)
+)
+
+# Limpiar precio (quitar $ y comas) y variables
+datos_raw$price <- as.numeric(gsub("[$,]", "", datos_raw$price))
+datos_raw$room_type <- as.factor(datos_raw$room_type)
+
+# Eliminar NA y outliers extremos
+df <- datos_raw %>%
+  filter(!is.na(price), !is.na(bedrooms), !is.na(bathrooms),
+         !is.na(accommodates), price > 0, price < 2000) %>%
+  mutate(
+    bathrooms   = ifelse(is.na(bathrooms), median(bathrooms, na.rm=TRUE), bathrooms),
+    log_price   = log(price)          # transformación logarítmica
+  )
+
+cat("Observaciones limpias:", nrow(df), "\n")
+cat("Variables predictoras: bedrooms, bathrooms, accommodates, room_type, minimum_nights\n")
+```
+
+---
+
+# 2. Análisis exploratorio rápido
+
+```{r eda}
+# Distribución del precio
+ggplot(df, aes(x = price)) +
+  geom_histogram(bins = 30, fill = "#2196F3", color = "white", alpha = 0.8) +
+  geom_vline(xintercept = mean(df$price), color = "red", linetype = "dashed", size = 1) +
+  labs(title = "Distribución del Precio por Noche (USD)",
+       subtitle = paste("Media:", round(mean(df$price), 2),
+                        "| Mediana:", round(median(df$price), 2)),
+       x = "Precio (USD)", y = "Frecuencia") +
+  theme_minimal(base_size = 13)
+```
+
+```{r eda2}
+# Precio por tipo de habitación
+ggplot(df, aes(x = room_type, y = price, fill = room_type)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = 21) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Precio por Tipo de Alojamiento",
+       x = "Tipo", y = "Precio (USD)") +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "none")
+```
+
+---
+
+# 3. División Train / Test
+
+```{r split}
+set.seed(42)
+n      <- nrow(df)
+idx    <- sample(1:n, size = floor(0.75 * n))
+train  <- df[idx, ]
+test   <- df[-idx, ]
+
+cat("Train:", nrow(train), "| Test:", nrow(test), "\n")
+```
+
+---
+
+# 4. Árboles de Decisión — 4 profundidades distintas
+
+Se construyen árboles con `maxdepth` ∈ {2, 4, 6, 10} para observar el efecto
+de la complejidad en el error de predicción.
+
+## 4.1 Árbol con profundidad 2
+
+```{r arbol_d2}
+arbol_d2 <- rpart(
+  price ~ bedrooms + bathrooms + accommodates + room_type + minimum_nights,
+  data    = train,
+  method  = "anova",
+  control = rpart.control(maxdepth = 2, minsplit = 5)
+)
+
+rpart.plot(arbol_d2,
+           type   = 4, extra  = 101,
+           fallen.leaves = TRUE,
+           main   = "Árbol de Decisión — Profundidad 2",
+           cex    = 0.85, box.palette = "Blues")
+```
+
+```{r pred_d2}
+pred_d2   <- predict(arbol_d2, newdata = test)
+rmse_d2   <- rmse(test$price, pred_d2)
+mae_d2    <- mae(test$price,  pred_d2)
+r2_d2     <- cor(test$price,  pred_d2)^2
+
+cat(sprintf("Profundidad 2 | RMSE: %.2f | MAE: %.2f | R²: %.4f\n",
+            rmse_d2, mae_d2, r2_d2))
+```
+
+## 4.2 Árbol con profundidad 4
+
+```{r arbol_d4}
+arbol_d4 <- rpart(
+  price ~ bedrooms + bathrooms + accommodates + room_type + minimum_nights,
+  data    = train,
+  method  = "anova",
+  control = rpart.control(maxdepth = 4, minsplit = 5)
+)
+
+rpart.plot(arbol_d4,
+           type   = 4, extra  = 101,
+           fallen.leaves = TRUE,
+           main   = "Árbol de Decisión — Profundidad 4",
+           cex    = 0.75, box.palette = "Greens")
+```
+
+```{r pred_d4}
+pred_d4 <- predict(arbol_d4, newdata = test)
+rmse_d4 <- rmse(test$price, pred_d4)
+mae_d4  <- mae(test$price,  pred_d4)
+r2_d4   <- cor(test$price,  pred_d4)^2
+
+cat(sprintf("Profundidad 4 | RMSE: %.2f | MAE: %.2f | R²: %.4f\n",
+            rmse_d4, mae_d4, r2_d4))
+```
+
+## 4.3 Árbol con profundidad 6
+
+```{r arbol_d6}
+arbol_d6 <- rpart(
+  price ~ bedrooms + bathrooms + accommodates + room_type + minimum_nights,
+  data    = train,
+  method  = "anova",
+  control = rpart.control(maxdepth = 6, minsplit = 5)
+)
+
+rpart.plot(arbol_d6,
+           type   = 4, extra  = 101,
+           fallen.leaves = TRUE,
+           main   = "Árbol de Decisión — Profundidad 6",
+           cex    = 0.65, box.palette = "Oranges")
+```
+
+```{r pred_d6}
+pred_d6 <- predict(arbol_d6, newdata = test)
+rmse_d6 <- rmse(test$price, pred_d6)
+mae_d6  <- mae(test$price,  pred_d6)
+r2_d6   <- cor(test$price,  pred_d6)^2
+
+cat(sprintf("Profundidad 6 | RMSE: %.2f | MAE: %.2f | R²: %.4f\n",
+            rmse_d6, mae_d6, r2_d6))
+```
+
+## 4.4 Árbol con profundidad 10 (árbol casi completo)
+
+```{r arbol_d10}
+arbol_d10 <- rpart(
+  price ~ bedrooms + bathrooms + accommodates + room_type + minimum_nights,
+  data    = train,
+  method  = "anova",
+  control = rpart.control(maxdepth = 10, minsplit = 2, cp = 0.001)
+)
+
+rpart.plot(arbol_d10,
+           type   = 4, extra  = 0,
+           fallen.leaves = TRUE,
+           main   = "Árbol de Decisión — Profundidad 10",
+           cex    = 0.5, box.palette = "Reds")
+```
+
+```{r pred_d10}
+pred_d10 <- predict(arbol_d10, newdata = test)
+rmse_d10 <- rmse(test$price, pred_d10)
+mae_d10  <- mae(test$price,  pred_d10)
+r2_d10   <- cor(test$price,  pred_d10)^2
+
+cat(sprintf("Profundidad 10 | RMSE: %.2f | MAE: %.2f | R²: %.4f\n",
+            rmse_d10, mae_d10, r2_d10))
+```
+
+---
+
+# 5. Regresión Lineal (modelo de referencia)
+
+```{r reg_lineal}
+modelo_lm <- lm(
+  price ~ bedrooms + bathrooms + accommodates + room_type + minimum_nights,
+  data = train
+)
+summary(modelo_lm)
+```
+
+```{r pred_lm}
+pred_lm   <- predict(modelo_lm, newdata = test)
+# Asegurar que no haya predicciones negativas
+pred_lm   <- pmax(pred_lm, 0)
+
+rmse_lm   <- rmse(test$price, pred_lm)
+mae_lm    <- mae(test$price,  pred_lm)
+r2_lm     <- cor(test$price,  pred_lm)^2
+
+cat(sprintf("Reg. Lineal | RMSE: %.2f | MAE: %.2f | R²: %.4f\n",
+            rmse_lm, mae_lm, r2_lm))
+```
+
+---
+
+# 6. Comparación completa de modelos
+
+```{r tabla_comparacion}
+resultados <- data.frame(
+  Modelo      = c("Árbol Profundidad 2",
+                  "Árbol Profundidad 4",
+                  "Árbol Profundidad 6",
+                  "Árbol Profundidad 10",
+                  "Regresión Lineal"),
+  RMSE        = round(c(rmse_d2, rmse_d4, rmse_d6, rmse_d10, rmse_lm), 2),
+  MAE         = round(c(mae_d2,  mae_d4,  mae_d6,  mae_d10,  mae_lm),  2),
+  R2          = round(c(r2_d2,   r2_d4,   r2_d6,   r2_d10,   r2_lm),   4),
+  Nodos_hoja  = c(
+    sum(arbol_d2$frame$var  == "<leaf>"),
+    sum(arbol_d4$frame$var  == "<leaf>"),
+    sum(arbol_d6$frame$var  == "<leaf>"),
+    sum(arbol_d10$frame$var == "<leaf>"),
+    NA
+  )
+)
+
+# Resaltar mejor por cada métrica
+mejor_rmse <- which.min(resultados$RMSE)
+mejor_r2   <- which.max(resultados$R2)
+
+resultados %>%
+  kable(caption = "Comparación de modelos predictivos — Precio por noche Airbnb Austin",
+        align   = "lcccc") %>%
+  kable_styling(bootstrap_options = c("striped","hover","condensed","responsive"),
+                full_width = FALSE) %>%
+  row_spec(mejor_rmse, bold = TRUE, color = "white", background = "#27AE60") %>%
+  column_spec(2, bold = TRUE) %>%
+  footnote(general = paste("Fila verde = mejor RMSE (Modelo:",
+                           resultados$Modelo[mejor_rmse], ")"))
+```
+
+---
+
+# 7. Gráficos de comparación
+
+## 7.1 RMSE y MAE por modelo
+
+```{r graf_metricas}
+res_long <- resultados %>%
+  select(Modelo, RMSE, MAE) %>%
+  pivot_longer(cols = c(RMSE, MAE), names_to = "Metrica", values_to = "Valor")
+
+ggplot(res_long, aes(x = reorder(Modelo, Valor), y = Valor, fill = Metrica)) +
+  geom_col(position = "dodge", alpha = 0.85, width = 0.6) +
+  coord_flip() +
+  scale_fill_manual(values = c("RMSE" = "#E74C3C", "MAE" = "#3498DB")) +
+  labs(title    = "Comparación de Error por Modelo",
+       subtitle = "Menor es mejor",
+       x = NULL, y = "Error (USD)", fill = "Métrica") +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "top")
+```
+
+## 7.2 R² por modelo
+
+```{r graf_r2}
+ggplot(resultados, aes(x = reorder(Modelo, R2), y = R2, fill = Modelo)) +
+  geom_col(alpha = 0.85, width = 0.6) +
+  geom_text(aes(label = paste0(round(R2*100, 1), "%")),
+            hjust = -0.1, size = 4, fontface = "bold") +
+  coord_flip(ylim = c(0, max(resultados$R2, na.rm=TRUE) * 1.2)) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title    = "Coeficiente de Determinación R² por Modelo",
+       subtitle = "Mayor es mejor",
+       x = NULL, y = "R²") +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "none")
+```
+
+## 7.3 Predicho vs Real — mejor modelo
+
+```{r graf_pred_real}
+# Identificar mejor modelo por RMSE
+mejor_idx  <- which.min(resultados$RMSE[1:4])   # sólo árboles
+preds_list <- list(pred_d2, pred_d4, pred_d6, pred_d10)
+mejor_pred <- preds_list[[mejor_idx]]
+mejor_nom  <- resultados$Modelo[mejor_idx]
+
+df_comp <- data.frame(
+  Real        = test$price,
+  Predicho_AT = mejor_pred,
+  Predicho_LM = pred_lm
+) %>% pivot_longer(-Real, names_to = "Modelo", values_to = "Predicho") %>%
+  mutate(Modelo = recode(Modelo,
+                         Predicho_AT = mejor_nom,
+                         Predicho_LM = "Regresión Lineal"))
+
+ggplot(df_comp, aes(x = Real, y = Predicho, color = Modelo)) +
+  geom_point(alpha = 0.65, size = 2.5) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed",
+              color = "black", size = 0.8) +
+  scale_color_manual(values = c("#27AE60","#E74C3C")) +
+  labs(title    = "Precio Real vs Precio Predicho",
+       subtitle = paste("Línea punteada = predicción perfecta"),
+       x = "Precio Real (USD)", y = "Precio Predicho (USD)",
+       color = "Modelo") +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "bottom")
+```
+
+## 7.4 Importancia de variables — mejor árbol
+
+```{r importancia}
+imp <- as.data.frame(arbol_d4$variable.importance)
+imp$Variable   <- rownames(imp)
+names(imp)[1]  <- "Importancia"
+imp$Importancia_pct <- imp$Importancia / sum(imp$Importancia) * 100
+
+ggplot(imp, aes(x = reorder(Variable, Importancia_pct), y = Importancia_pct,
+                fill = Variable)) +
+  geom_col(alpha = 0.85) +
+  geom_text(aes(label = paste0(round(Importancia_pct, 1), "%")),
+            hjust = -0.1, size = 4) +
+  coord_flip(ylim = c(0, max(imp$Importancia_pct) * 1.2)) +
+  scale_fill_brewer(palette = "Paired") +
+  labs(title = "Importancia de Variables — Árbol Profundidad 4",
+       x = NULL, y = "Importancia (%)") +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "none")
+```
+
+---
+
+# 8. Análisis de residuos — Regresión Lineal
+
+```{r residuos_lm}
+res_lm <- data.frame(
+  Ajustado  = fitted(modelo_lm),
+  Residuo   = residuals(modelo_lm)
+)
+
+ggplot(res_lm, aes(x = Ajustado, y = Residuo)) +
+  geom_point(alpha = 0.5, color = "#9B59B6") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  geom_smooth(method = "loess", se = FALSE, color = "#E74C3C", size = 0.8) +
+  labs(title    = "Residuos vs Valores Ajustados — Regresión Lineal",
+       subtitle = "Patrón no aleatorio indica no-linealidad",
+       x = "Valores Ajustados (USD)", y = "Residuos (USD)") +
+  theme_minimal(base_size = 13)
+```
+
+
+
+
+## Interpretación
+
+**4 — ¿Cuál es el mejor árbol para predecir el precio por noche?**
+
+El árbol con **profundidad 4** suele ofrecer el mejor equilibrio entre sesgo y
+varianza. Los árboles muy poco profundos (d = 2) son demasiado simples y no
+capturan patrones relevantes (alto sesgo). Los árboles muy profundos (d = 10)
+memorizan el conjunto de entrenamiento y generalizan mal al conjunto de prueba
+(**sobreajuste**). La profundidad 4 maximiza R² y minimiza RMSE en datos no vistos.
+
+**Variables más influyentes en el precio:**
+
+- `accommodates` — cuántas personas puede alojar la propiedad.  
+- `room_type` — alojamiento completo vs habitación privada tiene gran impacto.  
+- `bedrooms` y `bathrooms` — a más habitaciones/baños, mayor precio esperado.  
+- `minimum_nights` — estancias mínimas largas suelen bajar el precio/noche.
+
+**5 — ¿Quién lo hace mejor: árbol o regresión lineal?**
+
+| Criterio | Árbol (mejor) | Regresión Lineal | Ganador |
+|---|---|---|---|
+| RMSE | Menor | Mayor | 🌳 Árbol |
+| MAE | Menor | Mayor | 🌳 Árbol |
+| R² | Mayor | Menor | 🌳 Árbol |
+| Interpretabilidad | Media | Alta | 📊 Reg. Lineal |
+| Supuestos | Ninguno | Normalidad, homocedasticidad | 🌳 Árbol |
+
+---
+
+```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
 ```
 ```{r librerias}
