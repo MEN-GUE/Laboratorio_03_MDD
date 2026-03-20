@@ -1,0 +1,66 @@
+---
+title: "Pasaporte_Lab4: Árboles de Decisión"
+author: "Alejandro Antón y Juan Fernando"
+date: "2026-03-20"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+```{r librerias}
+# Carga de librerías base de manipulación y visualización
+library(tidyverse)
+library(ggplot2)
+library(skimr)
+
+# NUEVAS LIBRERÍAS PARA ÁRBOLES DE DECISIÓN
+library(rpart)
+library(rpart.plot)
+library(caret)
+```
+
+# Actividad 1: Carga y Preprocesamiento de Datos
+```{r actividad 1}
+# Cargar el conjunto de datos
+load("listings.RData")
+df <- listings
+
+# Limpieza y filtrado (Mismo criterio del Lab 3)
+df_clean <- df %>%
+  select(
+    -id, -scrape_id, -host_id, 
+    -minimum_minimum_nights, -maximum_minimum_nights, 
+    -minimum_maximum_nights, -maximum_maximum_nights,
+    -minimum_nights_avg_ntm, -maximum_nights_avg_ntm,
+    -availability_30, -availability_60, -availability_90,
+    -estimated_revenue_l365d
+  ) %>%
+  drop_na(price, accommodates, bedrooms, bathrooms, beds) %>%
+  mutate(price = as.numeric(gsub("[\\$,]", "", price))) %>%
+  filter(!is.na(price) & price > 0)
+
+# Verificamos las dimensiones listas para trabajar
+dim(df_clean)
+```
+Para esta primera actividad, importamos el conjunto de datos y aplicamos directamente las reglas de preprocesamiento establecidas en la consultoría anterior. Esto incluye la eliminación de variables identificadoras sin valor predictivo, la depuración de variables redundantes sobre noches y disponibilidad, y la limpieza de la variable respuesta (price) convirtiéndola a formato numérico continuo. Esto nos garantiza una base sólida y libre de ruido para construir nuestros árboles de decisión.
+
+# Actividad 2: División de los Datos (Entrenamiento y Prueba)
+```{r}
+# Fijamos una semilla para reproducibilidad
+set.seed(123)
+
+n <- nrow(df_clean)
+train_index <- sample(1:n, size = 0.7 * n)
+
+# División 70/30
+train <- df_clean[train_index, ]
+test  <- df_clean[-train_index, ]
+
+print(paste("Observaciones de entrenamiento:", nrow(train)))
+print(paste("Observaciones de prueba:", nrow(test)))
+```
+Al igual que en los modelos lineales, dividimos nuestro conjunto de datos limpio de forma aleatoria asignando el 70% de las observaciones al conjunto de entrenamiento y el 30% restante al conjunto de prueba. Fijar una semilla nos permite asegurar que los árboles de decisión generados puedan ser replicados exactamente en futuras ejecuciones.
+
+
+

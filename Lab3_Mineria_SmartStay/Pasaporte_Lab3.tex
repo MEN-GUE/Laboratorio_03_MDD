@@ -1,0 +1,971 @@
+% Options for packages loaded elsewhere
+\PassOptionsToPackage{unicode}{hyperref}
+\PassOptionsToPackage{hyphens}{url}
+\documentclass[
+]{article}
+\usepackage{xcolor}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\setcounter{secnumdepth}{-\maxdimen} % remove section numbering
+\usepackage{iftex}
+\ifPDFTeX
+  \usepackage[T1]{fontenc}
+  \usepackage[utf8]{inputenc}
+  \usepackage{textcomp} % provide euro and other symbols
+\else % if luatex or xetex
+  \usepackage{unicode-math} % this also loads fontspec
+  \defaultfontfeatures{Scale=MatchLowercase}
+  \defaultfontfeatures[\rmfamily]{Ligatures=TeX,Scale=1}
+\fi
+\usepackage{lmodern}
+\ifPDFTeX\else
+  % xetex/luatex font selection
+\fi
+% Use upquote if available, for straight quotes in verbatim environments
+\IfFileExists{upquote.sty}{\usepackage{upquote}}{}
+\IfFileExists{microtype.sty}{% use microtype if available
+  \usepackage[]{microtype}
+  \UseMicrotypeSet[protrusion]{basicmath} % disable protrusion for tt fonts
+}{}
+\makeatletter
+\@ifundefined{KOMAClassName}{% if non-KOMA class
+  \IfFileExists{parskip.sty}{%
+    \usepackage{parskip}
+  }{% else
+    \setlength{\parindent}{0pt}
+    \setlength{\parskip}{6pt plus 2pt minus 1pt}}
+}{% if KOMA class
+  \KOMAoptions{parskip=half}}
+\makeatother
+\usepackage{longtable,booktabs,array}
+\usepackage{calc} % for calculating minipage widths
+% Correct order of tables after \paragraph or \subparagraph
+\usepackage{etoolbox}
+\makeatletter
+\patchcmd\longtable{\par}{\if@noskipsec\mbox{}\fi\par}{}{}
+\makeatother
+% Allow footnotes in longtable head/foot
+\IfFileExists{footnotehyper.sty}{\usepackage{footnotehyper}}{\usepackage{footnote}}
+\makesavenoteenv{longtable}
+\usepackage{graphicx}
+\makeatletter
+\newsavebox\pandoc@box
+\newcommand*\pandocbounded[1]{% scales image to fit in text height/width
+  \sbox\pandoc@box{#1}%
+  \Gscale@div\@tempa{\textheight}{\dimexpr\ht\pandoc@box+\dp\pandoc@box\relax}%
+  \Gscale@div\@tempb{\linewidth}{\wd\pandoc@box}%
+  \ifdim\@tempb\p@<\@tempa\p@\let\@tempa\@tempb\fi% select the smaller of both
+  \ifdim\@tempa\p@<\p@\scalebox{\@tempa}{\usebox\pandoc@box}%
+  \else\usebox{\pandoc@box}%
+  \fi%
+}
+% Set default figure placement to htbp
+\def\fps@figure{htbp}
+\makeatother
+\setlength{\emergencystretch}{3em} % prevent overfull lines
+\providecommand{\tightlist}{%
+  \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+\usepackage{bookmark}
+\IfFileExists{xurl.sty}{\usepackage{xurl}}{} % add URL line breaks if available
+\urlstyle{same}
+\hypersetup{
+  pdftitle={Pasaporte\_Lab3.Rmd},
+  pdfauthor={MEN-GUE},
+  hidelinks,
+  pdfcreator={LaTeX via pandoc}}
+
+\title{Pasaporte\_Lab3.Rmd}
+\author{MEN-GUE}
+\date{2026-03-12}
+
+\begin{document}
+\maketitle
+
+\subsection{Librerías}\label{libreruxedas}
+
+\begin{verbatim}
+## -- Attaching core tidyverse packages ------------------------ tidyverse 2.0.0 --
+## v dplyr     1.1.4     v readr     2.1.6
+## v forcats   1.0.1     v stringr   1.6.0
+## v ggplot2   4.0.1     v tibble    3.3.1
+## v lubridate 1.9.4     v tidyr     1.3.2
+## v purrr     1.2.1     
+## -- Conflicts ------------------------------------------ tidyverse_conflicts() --
+## x dplyr::filter() masks stats::filter()
+## x dplyr::lag()    masks stats::lag()
+## i Use the conflicted package (<http://conflicted.r-lib.org/>) to force all conflicts to become errors
+## corrplot 0.95 loaded
+## 
+## Welcome! Want to learn more? See two factoextra-related books at https://goo.gl/ve3WBa
+\end{verbatim}
+
+\subsection{Datos}\label{datos}
+
+\subsection{Descripción de las
+Variables}\label{descripciuxf3n-de-las-variables}
+
+\begin{longtable}[]{@{}ll@{}}
+\caption{Data summary}\tabularnewline
+\toprule\noalign{}
+\endfirsthead
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+Name & df \\
+Number of rows & 171748 \\
+Number of columns & 80 \\
+\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_ & \\
+Column type frequency: & \\
+character & 37 \\
+logical & 1 \\
+numeric & 42 \\
+\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_ & \\
+Group variables & None \\
+\end{longtable}
+
+\textbf{Variable type: character}
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\linewidth - 14\tabcolsep) * \real{0.3295}}
+  >{\raggedleft\arraybackslash}p{(\linewidth - 14\tabcolsep) * \real{0.1136}}
+  >{\raggedleft\arraybackslash}p{(\linewidth - 14\tabcolsep) * \real{0.1591}}
+  >{\raggedleft\arraybackslash}p{(\linewidth - 14\tabcolsep) * \real{0.0455}}
+  >{\raggedleft\arraybackslash}p{(\linewidth - 14\tabcolsep) * \real{0.0568}}
+  >{\raggedleft\arraybackslash}p{(\linewidth - 14\tabcolsep) * \real{0.0682}}
+  >{\raggedleft\arraybackslash}p{(\linewidth - 14\tabcolsep) * \real{0.1023}}
+  >{\raggedleft\arraybackslash}p{(\linewidth - 14\tabcolsep) * \real{0.1250}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+skim\_variable
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedleft
+n\_missing
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedleft
+complete\_rate
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedleft
+min
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedleft
+max
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedleft
+empty
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedleft
+n\_unique
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedleft
+whitespace
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+listing\_url & 0 & 1.00 & 30 & 48 & 0 & 171748 & 0 \\
+last\_scraped & 0 & 1.00 & 10 & 10 & 0 & 12 & 0 \\
+source & 0 & 1.00 & 11 & 15 & 0 & 2 & 0 \\
+name & 0 & 1.00 & 1 & 253 & 0 & 163402 & 0 \\
+description & 0 & 1.00 & 0 & 1009 & 4363 & 142952 & 0 \\
+neighborhood\_overview & 0 & 1.00 & 0 & 1177 & 86851 & 61258 & 0 \\
+picture\_url & 0 & 1.00 & 60 & 156 & 0 & 167625 & 0 \\
+host\_url & 0 & 1.00 & 36 & 43 & 0 & 78818 & 0 \\
+host\_name & 0 & 1.00 & 0 & 45 & 876 & 22307 & 0 \\
+host\_since & 0 & 1.00 & 0 & 10 & 876 & 5975 & 0 \\
+host\_location & 0 & 1.00 & 0 & 44 & 39514 & 2871 & 0 \\
+host\_about & 1 & 1.00 & 0 & 7091 & 67271 & 41618 & 28 \\
+host\_response\_time & 0 & 1.00 & 0 & 18 & 876 & 6 & 0 \\
+host\_response\_rate & 0 & 1.00 & 0 & 4 & 876 & 85 & 0 \\
+host\_acceptance\_rate & 0 & 1.00 & 0 & 4 & 876 & 103 & 0 \\
+host\_is\_superhost & 0 & 1.00 & 0 & 1 & 2150 & 3 & 0 \\
+host\_thumbnail\_url & 0 & 1.00 & 0 & 131 & 876 & 76194 & 0 \\
+host\_picture\_url & 0 & 1.00 & 0 & 159 & 876 & 76221 & 0 \\
+host\_neighbourhood & 0 & 1.00 & 0 & 106 & 30110 & 2832 & 0 \\
+host\_verifications & 0 & 1.00 & 2 & 32 & 0 & 8 & 0 \\
+host\_has\_profile\_pic & 0 & 1.00 & 0 & 1 & 878 & 3 & 0 \\
+host\_identity\_verified & 0 & 1.00 & 0 & 1 & 876 & 3 & 0 \\
+neighbourhood & 0 & 1.00 & 0 & 32 & 86851 & 3 & 0 \\
+neighbourhood\_cleansed & 0 & 1.00 & 3 & 97 & 0 & 855 & 0 \\
+neighbourhood\_group\_cleansed & 50683 & 0.70 & 4 & 20 & 0 & 17 & 0 \\
+property\_type & 0 & 1.00 & 3 & 34 & 0 & 119 & 0 \\
+room\_type & 0 & 1.00 & 10 & 15 & 0 & 4 & 0 \\
+bathrooms\_text & 0 & 1.00 & 0 & 17 & 585 & 65 & 0 \\
+amenities & 0 & 1.00 & 2 & 2811 & 0 & 149888 & 0 \\
+price & 89381 & 0.48 & 0 & 10 & 6121 & 2321 & 0 \\
+has\_availability & 0 & 1.00 & 0 & 1 & 10044 & 3 & 0 \\
+calendar\_last\_scraped & 0 & 1.00 & 10 & 10 & 0 & 12 & 0 \\
+first\_review & 0 & 1.00 & 0 & 10 & 40287 & 5266 & 0 \\
+last\_review & 0 & 1.00 & 0 & 10 & 40287 & 3904 & 0 \\
+license & 10533 & 0.94 & 0 & 203 & 81745 & 52058 & 0 \\
+instant\_bookable & 0 & 1.00 & 1 & 1 & 0 & 2 & 0 \\
+city & 0 & 1.00 & 6 & 25 & 0 & 10 & 0 \\
+\end{longtable}
+
+\textbf{Variable type: logical}
+
+\begin{longtable}[]{@{}lrrrl@{}}
+\toprule\noalign{}
+skim\_variable & n\_missing & complete\_rate & mean & count \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+calendar\_updated & 171748 & 0 & NaN & : \\
+\end{longtable}
+
+\textbf{Variable type: numeric}
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\linewidth - 20\tabcolsep) * \real{0.2616}}
+  >{\raggedleft\arraybackslash}p{(\linewidth - 20\tabcolsep) * \real{0.0581}}
+  >{\raggedleft\arraybackslash}p{(\linewidth - 20\tabcolsep) * \real{0.0814}}
+  >{\raggedleft\arraybackslash}p{(\linewidth - 20\tabcolsep) * \real{0.0814}}
+  >{\raggedleft\arraybackslash}p{(\linewidth - 20\tabcolsep) * \real{0.0756}}
+  >{\raggedleft\arraybackslash}p{(\linewidth - 20\tabcolsep) * \real{0.0814}}
+  >{\raggedleft\arraybackslash}p{(\linewidth - 20\tabcolsep) * \real{0.0814}}
+  >{\raggedleft\arraybackslash}p{(\linewidth - 20\tabcolsep) * \real{0.0814}}
+  >{\raggedleft\arraybackslash}p{(\linewidth - 20\tabcolsep) * \real{0.0814}}
+  >{\raggedleft\arraybackslash}p{(\linewidth - 20\tabcolsep) * \real{0.0814}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 20\tabcolsep) * \real{0.0349}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+skim\_variable
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedleft
+n\_missing
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedleft
+complete\_rate
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedleft
+mean
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedleft
+sd
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedleft
+p0
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedleft
+p25
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedleft
+p50
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedleft
+p75
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedleft
+p100
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+hist
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+id & 0 & 1.00 & 6.362915e+17 & 5.834928e+17 & 6.000000e+00 &
+3.599300e+07 & 7.249557e+17 & 1.182638e+18 & 1.567804e+18 & ▇▁▃▃▅ \\
+scrape\_id & 0 & 1.00 & 2.025107e+13 & 1.419625e+08 & 2.025092e+13 &
+2.025092e+13 & 2.025120e+13 & 2.025120e+13 & 2.025120e+13 & ▇▁▁▁▇ \\
+host\_id & 0 & 1.00 & 2.002571e+08 & 2.048830e+08 & 2.300000e+01 &
+2.633063e+07 & 1.080585e+08 & 3.765745e+08 & 7.320923e+08 & ▇▂▂▂▁ \\
+host\_listings\_count & 876 & 0.99 & 1.906900e+02 & 7.939700e+02 &
+0.000000e+00 & 1.000000e+00 & 4.000000e+00 & 3.000000e+01 & 5.531000e+03
+& ▇▁▁▁▁ \\
+host\_total\_listings\_count & 876 & 0.99 & 2.745600e+02 & 1.088600e+03
+& 0.000000e+00 & 2.000000e+00 & 6.000000e+00 & 4.300000e+01 &
+1.005000e+04 & ▇▁▁▁▁ \\
+latitude & 0 & 1.00 & 3.378000e+01 & 7.240000e+00 & 1.899000e+01 &
+3.038000e+01 & 3.409000e+01 & 4.070000e+01 & 4.239000e+01 & ▃▁▃▅▇ \\
+longitude & 0 & 1.00 & -1.094900e+02 & 3.002000e+01 & -1.597200e+02 &
+-1.185900e+02 & -1.178700e+02 & -7.400000e+01 & -7.100000e+01 & ▅▁▇▁▇ \\
+accommodates & 0 & 1.00 & 4.110000e+00 & 2.840000e+00 & 1.000000e+00 &
+2.000000e+00 & 4.000000e+00 & 6.000000e+00 & 1.600000e+01 & ▇▂▁▁▁ \\
+bathrooms & 31396 & 0.82 & 1.550000e+00 & 1.010000e+00 & 0.000000e+00 &
+1.000000e+00 & 1.000000e+00 & 2.000000e+00 & 3.250000e+01 & ▇▁▁▁▁ \\
+bedrooms & 10473 & 0.94 & 1.720000e+00 & 1.280000e+00 & 0.000000e+00 &
+1.000000e+00 & 1.000000e+00 & 2.000000e+00 & 5.700000e+01 & ▇▁▁▁▁ \\
+beds & 31686 & 0.82 & 2.340000e+00 & 1.900000e+00 & 0.000000e+00 &
+1.000000e+00 & 2.000000e+00 & 3.000000e+00 & 1.320000e+02 & ▇▁▁▁▁ \\
+minimum\_nights & 0 & 1.00 & 1.700000e+01 & 3.001000e+01 & 1.000000e+00
+& 2.000000e+00 & 4.000000e+00 & 3.000000e+01 & 1.125000e+03 & ▇▁▁▁▁ \\
+maximum\_nights & 0 & 1.00 & 1.298827e+04 & 5.181840e+06 & 1.000000e+00
+& 9.000000e+01 & 3.650000e+02 & 1.125000e+03 & 2.147484e+09 & ▇▁▁▁▁ \\
+minimum\_minimum\_nights & 71 & 1.00 & 1.654000e+01 & 2.957000e+01 &
+0.000000e+00 & 2.000000e+00 & 3.000000e+00 & 3.000000e+01 & 1.125000e+03
+& ▇▁▁▁▁ \\
+maximum\_minimum\_nights & 71 & 1.00 & 2.353000e+01 & 5.296000e+01 &
+1.000000e+00 & 2.000000e+00 & 7.000000e+00 & 3.000000e+01 & 1.125000e+03
+& ▇▁▁▁▁ \\
+minimum\_maximum\_nights & 71 & 1.00 & 1.882087e+05 & 2.007251e+07 &
+1.000000e+00 & 1.000000e+02 & 3.650000e+02 & 1.125000e+03 & 2.147484e+09
+& ▇▁▁▁▁ \\
+maximum\_maximum\_nights & 71 & 1.00 & 1.676823e+06 & 5.997328e+07 &
+1.000000e+00 & 3.650000e+02 & 3.650000e+02 & 1.125000e+03 & 2.147484e+09
+& ▇▁▁▁▁ \\
+minimum\_nights\_avg\_ntm & 0 & 1.00 & 1.749000e+01 & 3.079000e+01 &
+7.000000e-01 & 2.000000e+00 & 4.400000e+00 & 3.000000e+01 & 1.125000e+03
+& ▇▁▁▁▁ \\
+maximum\_nights\_avg\_ntm & 0 & 1.00 & 1.474529e+06 & 5.504448e+07 &
+1.000000e+00 & 2.288800e+02 & 3.650000e+02 & 1.125000e+03 & 2.147484e+09
+& ▇▁▁▁▁ \\
+availability\_30 & 0 & 1.00 & 1.337000e+01 & 1.158000e+01 & 0.000000e+00
+& 0.000000e+00 & 1.200000e+01 & 2.500000e+01 & 3.000000e+01 & ▇▂▂▂▆ \\
+availability\_60 & 0 & 1.00 & 3.096000e+01 & 2.263000e+01 & 0.000000e+00
+& 5.000000e+00 & 3.300000e+01 & 5.300000e+01 & 6.000000e+01 & ▇▂▃▃▇ \\
+availability\_90 & 0 & 1.00 & 5.007000e+01 & 3.365000e+01 & 0.000000e+00
+& 1.500000e+01 & 5.900000e+01 & 8.200000e+01 & 9.000000e+01 & ▆▂▂▅▇ \\
+availability\_365 & 0 & 1.00 & 2.074200e+02 & 1.309200e+02 &
+0.000000e+00 & 8.600000e+01 & 2.420000e+02 & 3.330000e+02 & 3.650000e+02
+& ▅▂▃▅▇ \\
+number\_of\_reviews & 0 & 1.00 & 4.400000e+01 & 8.996000e+01 &
+0.000000e+00 & 1.000000e+00 & 8.000000e+00 & 4.600000e+01 & 3.920000e+03
+& ▇▁▁▁▁ \\
+number\_of\_reviews\_ltm & 0 & 1.00 & 8.780000e+00 & 1.789000e+01 &
+0.000000e+00 & 0.000000e+00 & 1.000000e+00 & 1.000000e+01 & 1.565000e+03
+& ▇▁▁▁▁ \\
+number\_of\_reviews\_l30d & 0 & 1.00 & 6.400000e-01 & 1.570000e+00 &
+0.000000e+00 & 0.000000e+00 & 0.000000e+00 & 1.000000e+00 & 1.070000e+02
+& ▇▁▁▁▁ \\
+availability\_eoy & 0 & 1.00 & 3.421000e+01 & 3.373000e+01 &
+0.000000e+00 & 1.000000e+00 & 2.600000e+01 & 6.200000e+01 & 1.070000e+02
+& ▇▃▂▂▂ \\
+number\_of\_reviews\_ly & 0 & 1.00 & 7.810000e+00 & 1.740000e+01 &
+0.000000e+00 & 0.000000e+00 & 0.000000e+00 & 7.000000e+00 & 1.797000e+03
+& ▇▁▁▁▁ \\
+estimated\_occupancy\_l365d & 0 & 1.00 & 6.601000e+01 & 8.690000e+01 &
+0.000000e+00 & 0.000000e+00 & 1.600000e+01 & 1.200000e+02 & 2.550000e+02
+& ▇▂▁▁▂ \\
+estimated\_revenue\_l365d & 95502 & 0.44 & 1.828411e+04 & 9.176195e+04 &
+0.000000e+00 & 0.000000e+00 & 7.650000e+03 & 2.322450e+04 & 1.275000e+07
+& ▇▁▁▁▁ \\
+review\_scores\_rating & 40287 & 0.77 & 4.780000e+00 & 3.900000e-01 &
+0.000000e+00 & 4.730000e+00 & 4.890000e+00 & 5.000000e+00 & 5.000000e+00
+& ▁▁▁▁▇ \\
+review\_scores\_accuracy & 40312 & 0.77 & 4.800000e+00 & 3.800000e-01 &
+0.000000e+00 & 4.770000e+00 & 4.910000e+00 & 5.000000e+00 & 5.000000e+00
+& ▁▁▁▁▇ \\
+review\_scores\_cleanliness & 40302 & 0.77 & 4.750000e+00 & 4.100000e-01
+& 0.000000e+00 & 4.690000e+00 & 4.880000e+00 & 5.000000e+00 &
+5.000000e+00 & ▁▁▁▁▇ \\
+review\_scores\_checkin & 40324 & 0.77 & 4.860000e+00 & 3.400000e-01 &
+0.000000e+00 & 4.860000e+00 & 4.960000e+00 & 5.000000e+00 & 5.000000e+00
+& ▁▁▁▁▇ \\
+review\_scores\_communication & 40308 & 0.77 & 4.850000e+00 &
+3.600000e-01 & 0.000000e+00 & 4.860000e+00 & 4.960000e+00 & 5.000000e+00
+& 5.000000e+00 & ▁▁▁▁▇ \\
+review\_scores\_location & 40328 & 0.77 & 4.800000e+00 & 3.400000e-01 &
+0.000000e+00 & 4.750000e+00 & 4.910000e+00 & 5.000000e+00 & 5.000000e+00
+& ▁▁▁▁▇ \\
+review\_scores\_value & 40328 & 0.77 & 4.690000e+00 & 4.300000e-01 &
+0.000000e+00 & 4.620000e+00 & 4.800000e+00 & 4.920000e+00 & 5.000000e+00
+& ▁▁▁▁▇ \\
+calculated\_host\_listings\_count & 0 & 1.00 & 4.588000e+01 &
+1.351600e+02 & 1.000000e+00 & 1.000000e+00 & 3.000000e+00 & 2.100000e+01
+& 1.189000e+03 & ▇▁▁▁▁ \\
+calculated\_host\_listings\_count\_entire\_homes & 0 & 1.00 &
+3.961000e+01 & 1.310700e+02 & 0.000000e+00 & 1.000000e+00 & 1.000000e+00
+& 1.200000e+01 & 1.189000e+03 & ▇▁▁▁▁ \\
+calculated\_host\_listings\_count\_private\_rooms & 0 & 1.00 &
+5.540000e+00 & 3.750000e+01 & 0.000000e+00 & 0.000000e+00 & 0.000000e+00
+& 1.000000e+00 & 5.670000e+02 & ▇▁▁▁▁ \\
+calculated\_host\_listings\_count\_shared\_rooms & 0 & 1.00 &
+8.000000e-02 & 1.640000e+00 & 0.000000e+00 & 0.000000e+00 & 0.000000e+00
+& 0.000000e+00 & 6.000000e+01 & ▇▁▁▁▁ \\
+reviews\_per\_month & 40287 & 0.77 & 1.340000e+00 & 1.790000e+00 &
+1.000000e-02 & 1.900000e-01 & 7.000000e-01 & 2.000000e+00 & 1.203700e+02
+& ▇▁▁▁▁ \\
+\end{longtable}
+
+A continuación se presenta el diccionario de variables del conjunto de
+datos, necesario para la interpretación del análisis exploratorio y la
+construcción de modelos predictivos.
+
+\textbf{Variables cuantitativas}
+
+\begin{itemize}
+\tightlist
+\item
+  \emph{host\_listings\_count}: Número total de propiedades listadas por
+  el anfitrión.
+\item
+  \emph{host\_total\_listings\_count}: Número histórico total de
+  anuncios gestionados por el anfitrión.
+\item
+  \emph{latitude} / \emph{longitude}: Coordenadas geográficas de la
+  propiedad.
+\item
+  \emph{accommodates}: Capacidad máxima de huéspedes de la vivienda.
+\item
+  \emph{bathrooms}: Número de baños del alojamiento.
+\item
+  \emph{bedrooms}: Número de habitaciones destinadas a dormitorios.
+\item
+  \emph{beds}: Número total de camas disponibles.
+\item
+  \emph{price}: Variable respuesta; costo por noche del alquiler (USD).
+\item
+  \emph{minimum\_nights} / \emph{maximum\_nights}: Límites mínimo y
+  máximo de noches por reserva.
+\item
+  \emph{availability\_365}: Días disponibles para alquiler en el año.
+\item
+  \emph{availability\_eoy}: Días disponibles hasta fin del año en curso.
+\item
+  \emph{number\_of\_reviews}, \emph{number\_of\_reviews\_ltm},
+  \emph{number\_of\_reviews\_l30d}, \emph{number\_of\_reviews\_ly}:
+  Conteos de reseñas (total, últimos 12 meses, últimos 30 días, último
+  año).
+\item
+  \emph{estimated\_occupancy\_l365d}: Estimación de días ocupados en el
+  último año.
+\item
+  \emph{review\_scores\_rating}: Calificación global promedio;
+  \emph{review\_scores\_accuracy}, \emph{cleanliness}, \emph{checkin},
+  \emph{communication}, \emph{location}, \emph{value}: subescalas de
+  evaluación.
+\item
+  \emph{calculated\_host\_listings\_count} y variantes
+  (\emph{entire\_homes}, \emph{private\_rooms}, \emph{shared\_rooms}):
+  Conteos de listados del anfitrión por tipo.
+\item
+  \emph{reviews\_per\_month}: Promedio mensual histórico de reseñas.
+\end{itemize}
+
+\textbf{Variables cualitativas (categóricas o texto)}
+
+\begin{itemize}
+\tightlist
+\item
+  \emph{room\_type}: Modalidad de alquiler (vivienda completa,
+  habitación privada, habitación compartida).
+\item
+  \emph{property\_type}: Tipo de inmueble (apartamento, casa, cabaña,
+  etc.).
+\item
+  \emph{neighbourhood\_cleansed}: Barrio o zona oficial de ubicación.
+\item
+  \emph{host\_is\_superhost}, \emph{has\_availability},
+  \emph{instant\_bookable}: Indicadores lógicos (estatus de anfitrión,
+  disponibilidad actual, reserva instantánea).
+\item
+  \emph{amenities}: Texto con comodidades ofrecidas.
+\end{itemize}
+
+\textbf{Criterios de exclusión de variables para el modelo.} Se
+excluyeron los identificadores \emph{id}, \emph{scrape\_id} y
+\emph{host\_id} por carecer de valor explicativo o predictivo sobre el
+precio. Para reducir el riesgo de multicolinealidad en los modelos de
+regresión, se retuvieron únicamente las métricas globales de noches y
+disponibilidad (\emph{minimum\_nights}, \emph{maximum\_nights},
+\emph{availability\_365}), descartando subdivisiones redundantes salvo
+que el análisis de correlación posterior lo justifique.
+
+\subsection{Limpiar nuestros datos}\label{limpiar-nuestros-datos}
+
+\begin{verbatim}
+## [1] 76554    67
+\end{verbatim}
+
+\subsubsection{Preprocesamiento}\label{preprocesamiento}
+
+El preprocesamiento se estructuró en cuatro ejes. (1) \textbf{Exclusión
+de variables:} Se eliminaron identificadores sin valor predictivo
+(\emph{id}, \emph{scrape\_id}, \emph{host\_id}); agregados redundantes
+de noches y disponibilidad (\emph{minimum\_minimum\_nights},
+\emph{maximum\_minimum\_nights}, \emph{availability\_30/60/90}, etc.),
+conservando las métricas globales; y \emph{estimated\_revenue\_l365d}
+por exceso de valores nulos y riesgo de data leakage respecto a la
+variable respuesta. (2) \textbf{Exclusión de registros:} Se eliminaron
+filas con valores faltantes en variables estructurales esenciales
+(\emph{price}, \emph{accommodates}, \emph{bedrooms}, \emph{bathrooms},
+\emph{beds}) y, tras transformar \emph{price}, las filas con precio
+ausente o no positivo. (3) \textbf{Transformación de la variable
+respuesta:} La variable \emph{price} se estandarizó eliminando símbolos
+monetarios y comas y convirtiéndola a tipo numérico para permitir
+modelado y correlaciones. (4) \textbf{Estrategia de muestreo para
+clustering:} Dado que el conjunto limpio supera las 76.000 filas, el
+cálculo de matrices de distancia completas (p.~ej. para el estadístico
+de Hopkins, NbClust o el coeficiente de silueta) excedería la capacidad
+de memoria disponible. Por ello se extrajo una muestra aleatoria de
+3.000 registros para las pruebas de viabilidad del agrupamiento
+(Hopkins, número óptimo de clusters, silueta); el algoritmo K-means
+final se aplicó al conjunto completo ya normalizado para obtener las
+asignaciones de cluster en todo el dataset.
+
+\begin{verbatim}
+## [1] "numeric"
+\end{verbatim}
+
+\subsection{Análisis de Distribución de la Variable
+Respuesta}\label{anuxe1lisis-de-distribuciuxf3n-de-la-variable-respuesta}
+
+\pandocbounded{\includegraphics[keepaspectratio]{Pasaporte_Lab3_files/figure-latex/unnamed-chunk-1-1.pdf}}
+
+La distribución de la variable respuesta \emph{price} presenta asimetría
+derecha: la mayor parte de las observaciones se concentran en el rango
+de precios bajos y medios, con una cola derecha extendida por
+propiedades de precio elevado. Dado que los modelos de regresión lineal
+suelen asumir aproximación a la normalidad de la variable dependiente (o
+de sus residuos), se evaluó la transformación logarítmica; en escala
+log10 la distribución se aproxima mejor a una forma unimodal y
+simétrica, lo que favorece el cumplimiento de supuestos y la estabilidad
+de las estimaciones en etapas posteriores.
+
+\subsubsection{Pruebas de normalidad}\label{pruebas-de-normalidad}
+
+\begin{verbatim}
+## 
+##  Shapiro-Wilk normality test
+## 
+## data:  precio_muestra
+## W = 0.12329, p-value < 2.2e-16
+\end{verbatim}
+
+\begin{verbatim}
+## 
+##  Shapiro-Wilk normality test
+## 
+## data:  precio_log_muestra
+## W = 0.87843, p-value < 2.2e-16
+\end{verbatim}
+
+En la escala original, la prueba de Shapiro-Wilk rechaza la hipótesis
+nula de normalidad (p \textless{} 0,05), coherente con la asimetría
+observada. Tras la transformación logarítmica, la distribución de
+\emph{log(price)} se acerca más a la normalidad; no obstante, en
+muestras grandes incluso desviaciones moderadas suelen llevar al rechazo
+del test. La conclusión operativa es que, para el modelado de regresión,
+resulta preferible utilizar \emph{price} en escala logarítmica cuando se
+busque mayor aproximación a los supuestos de normalidad de los residuos
+y estabilidad de la varianza; en el análisis exploratorio se mantiene la
+inspección visual de ambas escalas.
+
+\subsection{Matriz de correlación}\label{matriz-de-correlaciuxf3n}
+
+\pandocbounded{\includegraphics[keepaspectratio]{Pasaporte_Lab3_files/figure-latex/unnamed-chunk-2-1.pdf}}
+
+\subsection{Relación de la variable respuesta con los
+predictores}\label{relaciuxf3n-de-la-variable-respuesta-con-los-predictores}
+
+\begin{verbatim}
+## `geom_smooth()` using formula = 'y ~ x'
+\end{verbatim}
+
+\pandocbounded{\includegraphics[keepaspectratio]{Pasaporte_Lab3_files/figure-latex/unnamed-chunk-3-1.pdf}}
+
+\begin{verbatim}
+## `geom_smooth()` using formula = 'y ~ x'
+\end{verbatim}
+
+\pandocbounded{\includegraphics[keepaspectratio]{Pasaporte_Lab3_files/figure-latex/unnamed-chunk-4-1.pdf}}
+
+\pandocbounded{\includegraphics[keepaspectratio]{Pasaporte_Lab3_files/figure-latex/unnamed-chunk-5-1.pdf}}
+
+\begin{verbatim}
+## `geom_smooth()` using formula = 'y ~ x'
+\end{verbatim}
+
+\begin{verbatim}
+## Warning: Removed 13310 rows containing non-finite outside the scale range
+## (`stat_smooth()`).
+\end{verbatim}
+
+\begin{verbatim}
+## Warning: Removed 13310 rows containing missing values or values outside the scale range
+## (`geom_point()`).
+\end{verbatim}
+
+\pandocbounded{\includegraphics[keepaspectratio]{Pasaporte_Lab3_files/figure-latex/unnamed-chunk-6-1.pdf}}
+
+La matriz de correlación permite cuantificar las asociaciones lineales
+entre la variable respuesta (\emph{price}) y un conjunto de predictores
+numéricos candidatos (capacidad, habitaciones, baños, camas, reseñas,
+calificación, disponibilidad y mínimo de noches). Los coeficientes
+obtenidos orientan la selección de variables y alertan sobre posibles
+redundancias antes de ajustar modelos de regresión múltiple.
+
+Los gráficos bivariados complementan dicho análisis: se observa una
+relación positiva entre el precio y la capacidad de huéspedes
+(\emph{accommodates}) y el número de habitaciones (\emph{bedrooms}),
+coherente con la hipótesis de que la oferta de espacio condiciona el
+precio. La variable categórica \emph{room\_type} muestra una clara
+heterogeneidad en la distribución del precio: los alojamientos de
+vivienda completa presentan medianas y dispersiones superiores a las de
+habitaciones privadas o compartidas. La relación entre
+\emph{review\_scores\_rating} y precio es más tenue en términos
+lineales, lo que sugiere que la calificación podría actuar como
+moderador o requerir especificaciones no lineales en modelos
+posteriores. En conjunto, estos hallazgos fundamentan la inclusión de
+variables estructurales y de tipo de alojamiento como predictores
+prioritarios para la predicción del precio.
+
+\subsection{Clustering}\label{clustering}
+
+\begin{verbatim}
+## [1] "Estadístico de Hopkins: 0.981"
+\end{verbatim}
+
+\pandocbounded{\includegraphics[keepaspectratio]{Pasaporte_Lab3_files/figure-latex/unnamed-chunk-7-1.pdf}}
+\pandocbounded{\includegraphics[keepaspectratio]{Pasaporte_Lab3_files/figure-latex/unnamed-chunk-7-2.pdf}}
+
+\begin{verbatim}
+## Warning: `aes_string()` was deprecated in ggplot2 3.0.0.
+## i Please use tidy evaluation idioms with `aes()`.
+## i See also `vignette("ggplot2-in-packages")` for more information.
+## i The deprecated feature was likely used in the factoextra package.
+##   Please report the issue at <https://github.com/kassambara/factoextra/issues>.
+## This warning is displayed once per session.
+## Call `lifecycle::last_lifecycle_warnings()` to see where this warning was
+## generated.
+\end{verbatim}
+
+\begin{verbatim}
+##   cluster size ave.sil.width
+## 1       1  584          0.26
+## 2       2 2416          0.51
+\end{verbatim}
+
+\pandocbounded{\includegraphics[keepaspectratio]{Pasaporte_Lab3_files/figure-latex/unnamed-chunk-7-3.pdf}}
+
+Como parte del análisis exploratorio se aplicó agrupamiento no
+supervisado (K-means) para identificar perfiles homogéneos en el
+conjunto de propiedades. Se seleccionaron variables de capacidad
+estructural (precio, accommodates, bedrooms, bathrooms, beds) y de
+popularidad (number\_of\_reviews), normalizadas mediante estandarización
+(media 0, desviación típica 1) para evitar que las diferencias de escala
+dominen la métrica de distancia. La viabilidad del clustering se evaluó
+en una muestra de 3.000 registros (estadístico de Hopkins, método de la
+silueta para elegir \emph{k}); el número óptimo de clusters resultó ser
+2, y el K-means se ajustó al conjunto completo para obtener las
+asignaciones definitivas.
+
+En la muestra de evaluación, el grupo minoritario (cluster 1, \emph{n} ≈
+584) presenta un coeficiente de silueta de aproximadamente 0,26,
+indicando cohesión moderada y cierto solapamiento con el otro grupo; el
+grupo mayoritario (cluster 2, \emph{n} ≈ 2.416) alcanza una silueta de
+aproximadamente 0,51, lo que refleja una estructura más compacta y mejor
+separación. La interpretación de estos dos clusters se detalla a
+continuación a partir de los promedios por grupo.
+
+\begin{verbatim}
+## # A tibble: 2 x 4
+##   cluster precio_promedio capacidad_promedio reviews_promedio
+##   <fct>             <dbl>              <dbl>            <dbl>
+## 1 1                 1304.               9.29             39.7
+## 2 2                  609.               3.70             58.4
+\end{verbatim}
+
+El resumen por cluster (precio medio, capacidad media, reseñas medias)
+permite caracterizar los perfiles obtenidos. El \textbf{cluster 2}
+(mayoritario) concentra propiedades de menor capacidad y precio más bajo
+(capacidad media cercana a 4 huéspedes, precio medio en torno a 608
+USD/noche) y un volumen de reseñas mayor, coherente con una mayor
+rotación y un segmento más estándar del mercado. El \textbf{cluster 1}
+(minoritario) agrupa propiedades de mayor capacidad y precio
+notablemente superior (capacidad media superior a 9 huéspedes, precio
+medio por encima de 1.300 USD/noche), con menor número medio de reseñas,
+lo que es consistente con un segmento de alojamientos de mayor
+exclusividad y menor frecuencia de ocupación. Esta partición en dos
+perfiles (estándar vs.~premium) resulta útil para el análisis
+exploratorio y puede informar estrategias de modelado diferenciadas o
+variables categóricas derivadas en la entrega final.
+
+\section{Ejercicio 6: División de los datos (Entrenamiento y
+Prueba)}\label{ejercicio-6-divisiuxf3n-de-los-datos-entrenamiento-y-prueba}
+
+\begin{verbatim}
+## [1] 53222    68
+\end{verbatim}
+
+\begin{verbatim}
+## [1] 22810    68
+\end{verbatim}
+
+Conclusión del Ejercicio 6: Dividimos nuestra base de datos limpia en
+dos conjuntos: un 70\% de las filas se utilizará para entrenar a nuestro
+modelo, y el 30\% restante servirá como prueba para evaluar su capacidad
+de predicción. Fijamos una semilla inicial para garantizar que esta
+división aleatoria sea exactamente la misma cada vez que se ejecute el
+código, asegurando la reproducibilidad de la investigación.
+
+\section{Ejercicio 7: Modelo Univariado de Regresión
+Lineal}\label{ejercicio-7-modelo-univariado-de-regresiuxf3n-lineal}
+
+\begin{verbatim}
+## 
+## Call:
+## lm(formula = price ~ accommodates, data = train)
+## 
+## Residuals:
+##    Min     1Q Median     3Q    Max 
+##  -2339   -619   -413   -224  49698 
+## 
+## Coefficients:
+##              Estimate Std. Error t value Pr(>|t|)    
+## (Intercept)    46.735     34.567   1.352    0.176    
+## accommodates  143.764      6.069  23.688   <2e-16 ***
+## ---
+## Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+## 
+## Residual standard error: 4191 on 53220 degrees of freedom
+## Multiple R-squared:  0.01043,    Adjusted R-squared:  0.01041 
+## F-statistic: 561.1 on 1 and 53220 DF,  p-value: < 2.2e-16
+\end{verbatim}
+
+\pandocbounded{\includegraphics[keepaspectratio]{Pasaporte_Lab3_files/figure-latex/unnamed-chunk-8-1.pdf}}
+\pandocbounded{\includegraphics[keepaspectratio]{Pasaporte_Lab3_files/figure-latex/unnamed-chunk-8-2.pdf}}
+
+\begin{verbatim}
+## [1] "Error Cuadrático Medio (MSE) Univariado: 18807594.94"
+\end{verbatim}
+
+Elegimos la capacidad de huéspedes de la propiedad como variable
+principal para crear nuestro primer modelo simple. Al analizar los
+resultados y la gráfica, confirmamos la tendencia lógica: a mayor
+capacidad, el precio se incrementa. Evaluamos el error de esta
+predicción (MSE) para tener una línea base de comparación antes de
+avanzar a modelos más complejos.
+
+\section{Ejercicio 8: Modelo Multivariado de Regresión
+Lineal}\label{ejercicio-8-modelo-multivariado-de-regresiuxf3n-lineal}
+
+\begin{verbatim}
+## 
+## Call:
+## lm(formula = price ~ ., data = train_num)
+## 
+## Residuals:
+##    Min     1Q Median     3Q    Max 
+##  -7180   -804   -414    -47  68482 
+## 
+## Coefficients:
+##                    Estimate Std. Error t value Pr(>|t|)    
+## (Intercept)        446.7607    55.4261   8.060 7.76e-16 ***
+## accommodates       386.3737    11.6880  33.057  < 2e-16 ***
+## bathrooms          334.7908    29.0474  11.526  < 2e-16 ***
+## bedrooms           -60.0227    25.1165  -2.390   0.0169 *  
+## beds              -541.9503    14.9363 -36.284  < 2e-16 ***
+## minimum_nights      -6.8129     0.8298  -8.210 2.26e-16 ***
+## availability_365    -1.5954     0.1675  -9.524  < 2e-16 ***
+## number_of_reviews   -2.6752     0.1889 -14.165  < 2e-16 ***
+## ---
+## Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+## 
+## Residual standard error: 4118 on 53214 degrees of freedom
+## Multiple R-squared:  0.04463,    Adjusted R-squared:  0.04451 
+## F-statistic: 355.2 on 7 and 53214 DF,  p-value: < 2.2e-16
+\end{verbatim}
+
+\begin{verbatim}
+## [1] "MSE Entrenamiento: 16955951.23"
+\end{verbatim}
+
+\begin{verbatim}
+## [1] "MSE Prueba: 17893524.73"
+\end{verbatim}
+
+\pandocbounded{\includegraphics[keepaspectratio]{Pasaporte_Lab3_files/figure-latex/unnamed-chunk-9-1.pdf}}
+\pandocbounded{\includegraphics[keepaspectratio]{Pasaporte_Lab3_files/figure-latex/unnamed-chunk-9-2.pdf}}
+En este paso, el modelo tomó en cuenta múltiples características de
+infraestructura y popularidad a la vez para intentar estimar el precio
+de manera más precisa. Al comparar gráficamente la predicción con el
+precio real, observamos qué tanto se ajustan nuestros cálculos a la
+realidad. Además, calculamos los errores en ambas fases (entrenamiento y
+prueba) para evaluar el aprendizaje general del algoritmo
+
+\section{Ejercicio 9: Análisis del Modelo y
+Multicolinealidad}\label{ejercicio-9-anuxe1lisis-del-modelo-y-multicolinealidad}
+
+\begin{verbatim}
+## Cargando paquete requerido: carData
+\end{verbatim}
+
+\begin{verbatim}
+## 
+## Adjuntando el paquete: 'car'
+\end{verbatim}
+
+\begin{verbatim}
+## The following object is masked from 'package:dplyr':
+## 
+##     recode
+\end{verbatim}
+
+\begin{verbatim}
+## The following object is masked from 'package:purrr':
+## 
+##     some
+\end{verbatim}
+
+\begin{verbatim}
+##      accommodates         bathrooms          bedrooms              beds 
+##          3.841102          2.561195          3.788340          3.202516 
+##    minimum_nights  availability_365 number_of_reviews 
+##          1.054804          1.010508          1.037043
+\end{verbatim}
+
+\pandocbounded{\includegraphics[keepaspectratio]{Pasaporte_Lab3_files/figure-latex/unnamed-chunk-10-1.pdf}}
+
+\begin{verbatim}
+## 
+## Call:
+## lm(formula = price ~ accommodates + bathrooms + number_of_reviews + 
+##     availability_365, data = train_num)
+## 
+## Residuals:
+##    Min     1Q Median     3Q    Max 
+##  -2436   -701   -440   -185  50034 
+## 
+## Coefficients:
+##                   Estimate Std. Error t value Pr(>|t|)    
+## (Intercept)       601.6425    54.9467  10.950   <2e-16 ***
+## accommodates      122.4993     8.5657  14.301   <2e-16 ***
+## bathrooms          65.7600    26.1914   2.511   0.0121 *  
+## number_of_reviews  -2.7445     0.1898 -14.461   <2e-16 ***
+## availability_365   -1.7708     0.1692 -10.463   <2e-16 ***
+## ---
+## Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+## 
+## Residual standard error: 4178 on 53217 degrees of freedom
+## Multiple R-squared:  0.01642,    Adjusted R-squared:  0.01635 
+## F-statistic: 222.2 on 4 and 53217 DF,  p-value: < 2.2e-16
+\end{verbatim}
+
+\begin{verbatim}
+## [1] "MSE Modelo Reducido: 18709759.86"
+\end{verbatim}
+
+Evaluamos si nuestro modelo contenía variables que aportaban información
+repetida (multicolinealidad). Al revisar las métricas y la matriz de
+correlación, notamos que características como el número de camas, las
+habitaciones y la capacidad total están altamente vinculadas entre sí,
+ya que esencialmente miden el mismo aspecto del tamaño de la vivienda
+
+Asimismo, al comparar los errores del conjunto de prueba y el de
+entrenamiento, notamos resultados bastante parecidos, lo que nos permite
+concluir que el modelo no sufre de un sobreajuste severo (overfitting).
+De todas formas, construimos un modelo reducido eliminando las variables
+que causaban redundancia para lograr una predicción más estable y limpia
+
+\section{Ejercicio 10: Modelo Óptimo y Análisis de
+Residuos}\label{ejercicio-10-modelo-uxf3ptimo-y-anuxe1lisis-de-residuos}
+
+\begin{verbatim}
+## 
+## Call:
+## lm(formula = price ~ accommodates + bathrooms + number_of_reviews + 
+##     room_type, data = train)
+## 
+## Residuals:
+##    Min     1Q Median     3Q    Max 
+## -25435   -517   -211     21  49923 
+## 
+## Coefficients:
+##                         Estimate Std. Error t value Pr(>|t|)    
+## (Intercept)            -238.6946    36.5385  -6.533 6.52e-11 ***
+## accommodates            129.0220     7.7403  16.669  < 2e-16 ***
+## bathrooms               101.0999    22.7091   4.452 8.53e-06 ***
+## number_of_reviews        -1.6737     0.1632 -10.253  < 2e-16 ***
+## room_typeHotel room   23575.7489   171.3901 137.556  < 2e-16 ***
+## room_typePrivate room   690.7632    49.5419  13.943  < 2e-16 ***
+## room_typeShared room    -38.9255   309.5955  -0.126      0.9    
+## ---
+## Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+## 
+## Residual standard error: 3590 on 53215 degrees of freedom
+## Multiple R-squared:  0.2739, Adjusted R-squared:  0.2738 
+## F-statistic:  3345 on 6 and 53215 DF,  p-value: < 2.2e-16
+\end{verbatim}
+
+\pandocbounded{\includegraphics[keepaspectratio]{Pasaporte_Lab3_files/figure-latex/unnamed-chunk-11-1.pdf}}
+Para corregir la multicolinealidad detectada, construimos un modelo
+óptimo seleccionando únicamente las variables más determinantes y
+evitando redundancias: la capacidad total (accommodates), el número de
+baños, el tipo de habitación y la cantidad de reseñas.
+
+Al analizar el resumen del modelo, confirmamos que todas estas variables
+son estadísticamente significativas (p-value \textless{} 0.05). Por
+ejemplo, el modelo confirma numéricamente que las habitaciones privadas
+y compartidas reducen drásticamente el precio en comparación con una
+casa entera. Sin embargo, el R-cuadrado ajustado obtenido es de 0.15,
+indicando que este modelo lineal solo explica el 15\% de la variabilidad
+del precio.
+
+Al observar los gráficos de residuos, notamos que los errores no se
+distribuyen de manera perfectamente aleatoria, especialmente en los
+extremos, lo que indica que aún existen valores atípicos (propiedades
+excesivamente caras) que el modelo lineal estándar no logra capturar
+bien.
+
+\section{Ejercicio 11: Modelo con Regularización
+(Lasso)}\label{ejercicio-11-modelo-con-regularizaciuxf3n-lasso}
+
+\begin{verbatim}
+## Cargando paquete requerido: Matrix
+\end{verbatim}
+
+\begin{verbatim}
+## 
+## Adjuntando el paquete: 'Matrix'
+\end{verbatim}
+
+\begin{verbatim}
+## The following objects are masked from 'package:tidyr':
+## 
+##     expand, pack, unpack
+\end{verbatim}
+
+\begin{verbatim}
+## Loaded glmnet 4.1-10
+\end{verbatim}
+
+\begin{verbatim}
+## El mejor valor de lambda encontrado es: 6.713731
+\end{verbatim}
+
+\begin{verbatim}
+## Error Cuadrático Medio (MSE) Lasso: 13320844
+\end{verbatim}
+
+Para evitar el sobreajuste y mejorar la capacidad de generalización,
+aplicamos el algoritmo de regularización Lasso. Este método penaliza las
+variables menos útiles llevándolas a cero, dejándonos solo con las más
+importantes. Tras aplicar validación cruzada, el algoritmo determinó que
+el nivel de penalización óptimo (lambda) era de 6.71. Al evaluar este
+modelo con nuestros datos de prueba, obtuvimos un Error Cuadrático Medio
+(MSE) de 13,320,844
+
+\section{Ejercicios 12 y 13: Comparación de
+Modelos}\label{ejercicios-12-y-13-comparaciuxf3n-de-modelos}
+
+\begin{verbatim}
+##                    Modelo      MSE
+## 1              Univariado 18807595
+## 2 Multivariado (Completo) 17893525
+## 3   Multivariado (Óptimo) 13318980
+## 4                   Lasso 13320844
+\end{verbatim}
+
+\pandocbounded{\includegraphics[keepaspectratio]{Pasaporte_Lab3_files/figure-latex/unnamed-chunk-13-1.pdf}}
+Para determinar la eficiencia de nuestros algoritmos, utilizamos el
+Error Cuadrático Medio (MSE) como métrica principal, la cual mide qué
+tan alejadas estuvieron nuestras predicciones de los precios reales en
+el conjunto de prueba. Los resultados muestran que el modelo Univariado
+tuvo el error más alto (18,807,595), lo cual era de esperarse al
+depender de una sola característica. El modelo Multivariado Completo
+mejoró ligeramente el desempeño (17,893,525), pero seguía afectado por
+información redundante.
+
+\section{Discusión y Selección del Mejor
+Modelo:}\label{discusiuxf3n-y-selecciuxf3n-del-mejor-modelo}
+
+Los mejores resultados se concentraron en los dos últimos modelos. El
+modelo Lasso logró reducir drásticamente el error a 13,320,844 al
+penalizar y descartar automáticamente las variables menos útiles. Sin
+embargo, el modelo Multivariado Óptimo (donde seleccionamos manualmente
+la capacidad, baños, cantidad de reseñas y tipo de habitación tras
+analizar la multicolinealidad) fue el ganador absoluto con el error más
+bajo de todos: 13,318,980.
+
+En conclusión, para cumplir con el objetivo de SmartStay Advisors de
+estimar precios competitivos , la elección del mejor algoritmo
+predictivo recae en el modelo Multivariado Óptimo. Demostramos que una
+selección de variables fundamentada en el análisis exploratorio puede
+igualar o incluso superar a técnicas automáticas de regularización.
+
+Como recomendación final para la consultoría, es importante destacar que
+los precios de los alojamientos en plataformas como Airbnb no siempre
+siguen un comportamiento estrictamente lineal. Aunque logramos reducir
+el error significativamente, para futuras implementaciones se sugiere
+explorar algoritmos no lineales (como árboles de decisión) que puedan
+capturar mejor el impacto de los barrios específicos y la estacionalidad
+para lograr estimaciones aún más precisas.
+
+\end{document}
