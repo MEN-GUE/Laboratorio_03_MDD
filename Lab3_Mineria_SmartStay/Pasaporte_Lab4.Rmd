@@ -43,7 +43,7 @@ df_clean <- df %>%
 # Verificamos las dimensiones listas para trabajar
 dim(df_clean)
 ```
-Para esta primera actividad, importamos el conjunto de datos y aplicamos directamente las reglas de preprocesamiento establecidas en la consultoría anterior. Esto incluye la eliminación de variables identificadoras sin valor predictivo, la depuración de variables redundantes sobre noches y disponibilidad, y la limpieza de la variable respuesta (price) convirtiéndola a formato numérico continuo. Esto nos garantiza una base sólida y libre de ruido para construir nuestros árboles de decisión.
+Para esta primera actividad, importamos el conjunto de datos y aplicamos directamente las reglas de limpieza establecidas en la consultoría anterior. Esto incluye la eliminación de variables identificadoras sin valor predictivo, la depuración de redundancias sobre disponibilidad y la conversión de la variable del precio a formato numérico. Tras realizar este proceso, obtuvimos un conjunto de datos final compuesto por 76,032 propiedades y 67 características, garantizando una base sólida y libre de ruido para construir nuestros árboles de decisión.
 
 # Actividad 2: División de los Datos (Entrenamiento y Prueba)
 ```{r}
@@ -60,7 +60,32 @@ test  <- df_clean[-train_index, ]
 print(paste("Observaciones de entrenamiento:", nrow(train)))
 print(paste("Observaciones de prueba:", nrow(test)))
 ```
-Al igual que en los modelos lineales, dividimos nuestro conjunto de datos limpio de forma aleatoria asignando el 70% de las observaciones al conjunto de entrenamiento y el 30% restante al conjunto de prueba. Fijar una semilla nos permite asegurar que los árboles de decisión generados puedan ser replicados exactamente en futuras ejecuciones.
+Al igual que en los modelos anteriores, dividimos nuestro conjunto de datos limpio de forma aleatoria asignando el 70% de las observaciones al conjunto de entrenamiento y el 30% restante al conjunto de prueba. Esto nos dejó con 53,222 propiedades para enseñar y entrenar al algoritmo, y 22,810 propiedades reservadas exclusivamente para evaluar su desempeño. Fijar una semilla inicial nos permite asegurar que los datos seleccionados sean exactamente los mismos en futuras ejecuciones, manteniendo la investigación reproducible.
 
 
+# Actividad 3: Creación del Primer Modelo de Árbol de Decisión
+```{r actividad 3}
+# Entrenamos el modelo de árbol de decisión (Método ANOVA para regresión continua)
+arbol_base <- rpart(price ~ accommodates + bathrooms + bedrooms + beds + room_type + number_of_reviews, 
+                    data = train, 
+                    method = "anova",
+                    control = rpart.control(cp = 0.01)) # Parámetro de complejidad inicial
 
+# Resumen de las divisiones del árbol
+printcp(arbol_base)
+
+# Visualización gráfica del árbol de decisión
+rpart.plot(arbol_base, 
+           type = 2, 
+           extra = 101, 
+           fallen.leaves = TRUE, 
+           main = "Árbol de Decisión Base para Predecir el Precio",
+           box.palette = "Blues")
+```
+Para nuestro primer acercamiento con algoritmos de clasificación y regresión, construimos un árbol utilizando las variables que demostraron mayor relación con el precio. Un hallazgo interesante de este proceso es que, aunque le proporcionamos varias características al modelo (incluyendo baños y habitaciones), el algoritmo determinó de forma automática que las variables más útiles y definitivas para predecir el precio son únicamente cuatro: la capacidad total de huéspedes, la cantidad de camas, el número de reseñas y el tipo de habitación.
+
+El gráfico generado nos permite visualizar claramente las reglas que el algoritmo descubrió por sí solo:
+
+* El cuadro superior indica que, antes de hacer cualquier división, el precio promedio de todas las propiedades es de $546.
+* La primera regla de decisión (y la más importante) separa las propiedades según su privacidad. Si la propiedad no es una casa o apartamento entero (lado izquierdo), el precio promedio cae a $348, agrupando al 23% de las viviendas.
+* Si la propiedad sí es una casa entera (lado derecho), el precio promedio sube a $604. A partir de aquí, el árbol sigue creando subgrupos basándose principalmente en el tamaño (si caben menos de 4.5 personas, o menos de 6.5 camas), demostrando que, una vez garantizada la privacidad, el espacio disponible es el factor que más eleva el costo del alquiler.
