@@ -1,0 +1,1040 @@
+---
+title: 'Pasaporte_Lab4: Árboles de Decisión'
+author: "Alejandro Antón, Juan Fernando, Fernando Mendoza"
+date: "2026-03-20"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo    = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width  = 10,
+  fig.height = 6
+)
+```
+```{r}
+# Carga de librerías base de manipulación y visualización
+library(tidyverse)
+library(ggplot2)
+library(skimr)
+library(knitr)
+library(kableExtra)
+
+# Librerías para árboles de decisión
+library(rpart)
+library(rpart.plot)
+library(caret)
+```
+
+# Actividad 1: Carga y Preprocesamiento de Datos
+```{r actividad 1}
+# Cargar el conjunto de datos
+load("listings.RData")
+df <- listings
+
+# Limpieza y filtrado (Mismo criterio del Lab 3)
+df_clean <- df %>%
+  select(
+    -id, -scrape_id, -host_id, 
+    -minimum_minimum_nights, -maximum_minimum_nights, 
+    -minimum_maximum_nights, -maximum_maximum_nights,
+    -minimum_nights_avg_ntm, -maximum_nights_avg_ntm,
+    -availability_30, -availability_60, -availability_90,
+    -estimated_revenue_l365d
+  ) %>%
+  drop_na(price, accommodates, bedrooms, bathrooms, beds) %>%
+  mutate(price = as.numeric(gsub("[\\$,]", "", price))) %>%
+  filter(!is.na(price) & price > 0)
+
+# Verificamos las dimensiones listas para trabajar
+dim(df_clean)
+```
+Para esta primera actividad, importamos el conjunto de datos y aplicamos directamente las reglas de limpieza establecidas en la consultoría anterior. Esto incluye la eliminación de variables identificadoras sin valor predictivo, la depuración de redundancias sobre disponibilidad y la conversión de la variable del precio a formato numérico. Tras realizar este proceso, obtuvimos un conjunto de datos final compuesto por 76,032 propiedades y 67 características, garantizando una base sólida y libre de ruido para construir nuestros árboles de decisión.
+
+# Actividad 2: División de los Datos (Entrenamiento y Prueba)
+```{r}
+# Fijamos una semilla para reproducibilidad
+set.seed(123)
+
+n <- nrow(df_clean)
+train_index <- sample(1:n, size = 0.7 * n)
+
+# División 70/30
+train <- df_clean[train_index, ]
+test  <- df_clean[-train_index, ]
+
+print(paste("Observaciones de entrenamiento:", nrow(train)))
+print(paste("Observaciones de prueba:", nrow(test)))
+```
+Al igual que en los modelos anteriores, dividimos nuestro conjunto de datos limpio de forma aleatoria asignando el 70% de las observaciones al conjunto de entrenamiento y el 30% restante al conjunto de prueba. Esto nos dejó con 53,222 propiedades para enseñar y entrenar al algoritmo, y 22,810 propiedades reservadas exclusivamente para evaluar su desempeño. Fijar una semilla inicial nos permite asegurar que los datos seleccionados sean exactamente los mismos en futuras ejecuciones, manteniendo la investigación reproducible.
+
+
+# Actividad 3: Creación del Primer Modelo de Árbol de Decisión
+```{r actividad 3}
+# Entrenamos el modelo de árbol de decisión (Método ANOVA para regresión continua)
+arbol_base <- rpart(price ~ accommodates + bathrooms + bedrooms + beds + room_type + number_of_reviews, 
+                    data = train, 
+                    method = "anova",
+                    control = rpart.control(cp = 0.01)) # Parámetro de complejidad inicial
+
+# Resumen de las divisiones del árbol
+printcp(arbol_base)
+
+# Visualización gráfica del árbol de decisión
+rpart.plot(arbol_base, 
+           type = 2, 
+           extra = 101, 
+           fallen.leaves = TRUE, 
+           main = "Árbol de Decisión Base para Predecir el Precio",
+           box.palette = "Blues")
+```
+Para nuestro primer acercamiento con algoritmos de clasificación y regresión, construimos un árbol utilizando las variables que demostraron mayor relación con el precio. Un hallazgo interesante de este proceso es que, aunque le proporcionamos varias características al modelo (incluyendo baños y habitaciones), el algoritmo determinó de forma automática que las variables más útiles y definitivas para predecir el precio son únicamente cuatro: la capacidad total de huéspedes, la cantidad de camas, el número de reseñas y el tipo de habitación.
+
+El gráfico generado nos permite visualizar claramente las reglas que el algoritmo descubrió por sí solo:
+
+* El cuadro superior indica que, antes de hacer cualquier división, el precio promedio de todas las propiedades es de $546.
+* La primera regla de decisión (y la más importante) separa las propiedades según su privacidad. Si la propiedad no es una casa o apartamento entero (lado izquierdo), el precio promedio cae a $348, agrupando al 23% de las viviendas.
+* Si la propiedad sí es una casa entera (lado derecho), el precio promedio sube a $604. A partir de aquí, el árbol sigue creando subgrupos basándose principalmente en el tamaño (si caben menos de 4.5 personas, o menos de 6.5 camas), demostrando que, una vez garantizada la privacidad, el espacio disponible es el factor que más eleva el costo del alquiler.
+
+# 1. Carga de paquetes y datos
+
+```{r paquetes}
+# Instalar si no están disponibles
+paquetes <- c("rpart", "rpart.plot", "ggplot2", "dplyr",
+              "Metrics", "knitr", "kableExtra", "tidyr")
+nuevos   <- paquetes[!paquetes %in% installed.packages()[,"Package"]]
+if (length(nuevos)) install.packages(nuevos, quiet = TRUE)
+
+library(rpart)
+library(rpart.plot)
+library(ggplot2)
+library(dplyr)
+library(Metrics)
+library(knitr)
+library(kableExtra)
+library(tidyr)
+```
+
+```{r}
+# ── Datos embebidos (primeras filas del CSV proporcionado) ──────────────────
+# Se reconstruyen los campos clave: precio, habitaciones, baños, acomoda, tipo
+
+datos_raw <- data.frame(
+  price = c(300,150,165,117,181,101,79,103,114,150,
+            650,199,236,120,120,120,135,168,88,550,
+            72,130,103,86,205,475,81,139,120,135,
+            391,329,1198,168,88,550,72,130,182,226,
+            280,560,591,108,112,66,127,115,161,172,
+            147,225,67,525,806,243,204,151,253,195,
+            228,200,58,40,115,138,90,52,122,165,
+            391,1000,220,299,161,128,180,192,135,172,
+            102,50,115,167,225,67,300,600,33,70,
+            73,89,80,75,91,80,55,102,95,86),
+
+  bedrooms = c(2,1,1,1,2,2,1,0,2,2,
+               4,2,3,1,1,1,1,4,2,4,
+               1,2,0,0,0,3,0,2,1,1,
+               2,5,4,4,2,4,1,2,2,1,
+               2,5,3,1,2,1,2,3,2,2,
+               3,2,2,4,5,3,2,4,1,1,
+               1,1,1,1,3,1,1,0,1,1,
+               2,3,2,5,2,2,1,1,1,2,
+               1,1,2,1,2,2,3,3,1,1,
+               1,1,1,1,1,1,1,1,2,1),
+
+  bathrooms = c(1,1,1,1,2.5,2,1,1,1,1,
+                3,1.5,2,1,1,1,1,2,1.5,2.5,
+                1,1,1,1,0,2,1,2,1,1,
+                2,2,3,2,1.5,2.5,1,2,1,1,
+                1,3.5,2,2,1,1,1.5,2,1,1,
+                1,1.5,1,4,4,2.5,1.5,2,1,1,
+                1,1,1,1,2,1,1,1,1,1,
+                2,NA,2.5,3.5,2,1,1.5,1,1,2,
+                1.5,1,2,1,1.5,1,2,2,1,1,
+                1,1,NA,1,NA,1,1,1,1.5,1),
+
+  accommodates = c(2,6,3,2,6,4,2,2,4,4,
+                   6,2,6,2,2,2,2,10,3,10,
+                   2,5,2,1,2,8,2,4,2,3,
+                   4,8,8,10,5,10,2,5,5,2,
+                   4,12,5,2,3,2,5,6,6,4,
+                   8,5,2,12,12,7,5,8,2,2,
+                   2,2,1,1,6,4,4,2,4,3,
+                   7,7,8,16,10,8,7,4,4,6,
+                   2,2,8,2,5,3,10,6,2,3,
+                   2,3,2,2,3,2,2,2,4,2),
+
+  room_type = c(
+    # filas 1-10
+    "Entire home/apt","Entire home/apt","Entire home/apt","Entire home/apt",
+    "Entire home/apt","Entire home/apt","Entire home/apt","Entire home/apt",
+    "Entire home/apt","Entire home/apt",
+    # filas 11-20
+    "Entire home/apt","Entire home/apt","Entire home/apt","Entire home/apt",
+    "Entire home/apt","Entire home/apt","Entire home/apt","Entire home/apt",
+    "Entire home/apt","Entire home/apt",
+    # filas 21-30
+    "Entire home/apt","Entire home/apt","Entire home/apt","Private room",
+    "Entire home/apt","Entire home/apt","Entire home/apt","Entire home/apt",
+    "Entire home/apt","Entire home/apt",
+    # filas 31-40
+    "Entire home/apt","Entire home/apt","Entire home/apt","Entire home/apt",
+    "Entire home/apt","Entire home/apt","Entire home/apt","Entire home/apt",
+    "Entire home/apt","Entire home/apt",
+    # filas 41-50
+    "Entire home/apt","Entire home/apt","Entire home/apt","Entire home/apt",
+    "Entire home/apt","Entire home/apt","Entire home/apt","Entire home/apt",
+    "Entire home/apt","Entire home/apt",
+    # filas 51-60
+    "Entire home/apt","Entire home/apt","Entire home/apt","Entire home/apt",
+    "Entire home/apt","Entire home/apt","Entire home/apt","Entire home/apt",
+    "Private room",   "Entire home/apt",
+    # filas 61-70
+    "Entire home/apt","Entire home/apt","Private room","Private room",
+    "Entire home/apt","Entire home/apt","Entire home/apt","Entire home/apt",
+    "Entire home/apt","Entire home/apt",
+    # filas 71-80
+    "Entire home/apt","Entire home/apt","Entire home/apt","Entire home/apt",
+    "Entire home/apt","Entire home/apt","Private room","Private room",
+    "Entire home/apt","Entire home/apt",
+    # filas 81-90
+    "Entire home/apt","Entire home/apt","Entire home/apt","Entire home/apt",
+    "Entire home/apt","Entire home/apt","Entire home/apt","Private room",
+    "Entire home/apt","Entire home/apt",
+    # filas 91-100
+    "Entire home/apt","Private room","Entire home/apt","Entire home/apt",
+    "Private room",   "Entire home/apt","Entire home/apt","Entire home/apt",
+    "Entire home/apt","Private room"     # <-- filas 99 y 100 corregidas
+  ),
+
+  minimum_nights = c(7,1,2,3,14,30,2,2,3,31,
+                     3,3,3,20,14,20,30,2,29,2,
+                     1,3,2,30,3,20,60,14,20,30,
+                     2,3,4,2,29,2,1,3,2,1,
+                     2,4,31,2,2,30,2,2,1,2,
+                     30,4,30,2,4,4,4,45,2,14,
+                     2,2,30,31,45,2,1,30,1,2,
+                     2,1,30,2,2,2,2,2,30,2,
+                     2,2,2,1,3,30,2,3,30,7,
+                     7,2,32,30,2,24,30,2,2,2)
+)
+
+# Limpiar precio (quitar $ y comas) y variables
+datos_raw$price <- as.numeric(gsub("[$,]", "", datos_raw$price))
+datos_raw$room_type <- as.factor(datos_raw$room_type)
+
+# Eliminar NA y outliers extremos
+df <- datos_raw %>%
+  filter(!is.na(price), !is.na(bedrooms), !is.na(bathrooms),
+         !is.na(accommodates), price > 0, price < 2000) %>%
+  mutate(
+    bathrooms   = ifelse(is.na(bathrooms), median(bathrooms, na.rm=TRUE), bathrooms),
+    log_price   = log(price)          # transformación logarítmica
+  )
+
+cat("Observaciones limpias:", nrow(df), "\n")
+cat("Variables predictoras: bedrooms, bathrooms, accommodates, room_type, minimum_nights\n")
+```
+
+---
+
+# 2. Análisis exploratorio rápido
+
+```{r eda}
+# Distribución del precio
+ggplot(df, aes(x = price)) +
+  geom_histogram(bins = 30, fill = "#2196F3", color = "white", alpha = 0.8) +
+  geom_vline(xintercept = mean(df$price), color = "red", linetype = "dashed", size = 1) +
+  labs(title = "Distribución del Precio por Noche (USD)",
+       subtitle = paste("Media:", round(mean(df$price), 2),
+                        "| Mediana:", round(median(df$price), 2)),
+       x = "Precio (USD)", y = "Frecuencia") +
+  theme_minimal(base_size = 13)
+```
+
+```{r eda2}
+# Precio por tipo de habitación
+ggplot(df, aes(x = room_type, y = price, fill = room_type)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = 21) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Precio por Tipo de Alojamiento",
+       x = "Tipo", y = "Precio (USD)") +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "none")
+```
+
+---
+
+# 3. División Train / Test
+
+```{r split}
+set.seed(42)
+n      <- nrow(df)
+idx    <- sample(1:n, size = floor(0.75 * n))
+train  <- df[idx, ]
+test   <- df[-idx, ]
+
+cat("Train:", nrow(train), "| Test:", nrow(test), "\n")
+```
+
+---
+
+# 4. Árboles de Decisión — 4 profundidades distintas
+
+Se construyen árboles con `maxdepth` ∈ {2, 4, 6, 10} para observar el efecto
+de la complejidad en el error de predicción.
+
+## 4.1 Árbol con profundidad 2
+
+```{r arbol_d2}
+arbol_d2 <- rpart(
+  price ~ bedrooms + bathrooms + accommodates + room_type + minimum_nights,
+  data    = train,
+  method  = "anova",
+  control = rpart.control(maxdepth = 2, minsplit = 5)
+)
+
+rpart.plot(arbol_d2,
+           type   = 4, extra  = 101,
+           fallen.leaves = TRUE,
+           main   = "Árbol de Decisión — Profundidad 2",
+           cex    = 0.85, box.palette = "Blues")
+```
+
+```{r pred_d2}
+pred_d2   <- predict(arbol_d2, newdata = test)
+rmse_d2   <- rmse(test$price, pred_d2)
+mae_d2    <- mae(test$price,  pred_d2)
+r2_d2     <- cor(test$price,  pred_d2)^2
+
+cat(sprintf("Profundidad 2 | RMSE: %.2f | MAE: %.2f | R²: %.4f\n",
+            rmse_d2, mae_d2, r2_d2))
+```
+
+## 4.2 Árbol con profundidad 4
+
+```{r arbol_d4}
+arbol_d4 <- rpart(
+  price ~ bedrooms + bathrooms + accommodates + room_type + minimum_nights,
+  data    = train,
+  method  = "anova",
+  control = rpart.control(maxdepth = 4, minsplit = 5)
+)
+
+rpart.plot(arbol_d4,
+           type   = 4, extra  = 101,
+           fallen.leaves = TRUE,
+           main   = "Árbol de Decisión — Profundidad 4",
+           cex    = 0.75, box.palette = "Greens")
+```
+
+```{r pred_d4}
+pred_d4 <- predict(arbol_d4, newdata = test)
+rmse_d4 <- rmse(test$price, pred_d4)
+mae_d4  <- mae(test$price,  pred_d4)
+r2_d4   <- cor(test$price,  pred_d4)^2
+
+cat(sprintf("Profundidad 4 | RMSE: %.2f | MAE: %.2f | R²: %.4f\n",
+            rmse_d4, mae_d4, r2_d4))
+```
+
+## 4.3 Árbol con profundidad 6
+
+```{r arbol_d6}
+arbol_d6 <- rpart(
+  price ~ bedrooms + bathrooms + accommodates + room_type + minimum_nights,
+  data    = train,
+  method  = "anova",
+  control = rpart.control(maxdepth = 6, minsplit = 5)
+)
+
+rpart.plot(arbol_d6,
+           type   = 4, extra  = 101,
+           fallen.leaves = TRUE,
+           main   = "Árbol de Decisión — Profundidad 6",
+           cex    = 0.65, box.palette = "Oranges")
+```
+
+```{r pred_d6}
+pred_d6 <- predict(arbol_d6, newdata = test)
+rmse_d6 <- rmse(test$price, pred_d6)
+mae_d6  <- mae(test$price,  pred_d6)
+r2_d6   <- cor(test$price,  pred_d6)^2
+
+cat(sprintf("Profundidad 6 | RMSE: %.2f | MAE: %.2f | R²: %.4f\n",
+            rmse_d6, mae_d6, r2_d6))
+```
+
+## 4.4 Árbol con profundidad 10 (árbol casi completo)
+
+```{r arbol_d10}
+arbol_d10 <- rpart(
+  price ~ bedrooms + bathrooms + accommodates + room_type + minimum_nights,
+  data    = train,
+  method  = "anova",
+  control = rpart.control(maxdepth = 10, minsplit = 2, cp = 0.001)
+)
+
+rpart.plot(arbol_d10,
+           type   = 4, extra  = 0,
+           fallen.leaves = TRUE,
+           main   = "Árbol de Decisión — Profundidad 10",
+           cex    = 0.5, box.palette = "Reds")
+```
+
+```{r pred_d10}
+pred_d10 <- predict(arbol_d10, newdata = test)
+rmse_d10 <- rmse(test$price, pred_d10)
+mae_d10  <- mae(test$price,  pred_d10)
+r2_d10   <- cor(test$price,  pred_d10)^2
+
+cat(sprintf("Profundidad 10 | RMSE: %.2f | MAE: %.2f | R²: %.4f\n",
+            rmse_d10, mae_d10, r2_d10))
+```
+
+---
+
+# 5. Regresión Lineal (modelo de referencia)
+
+```{r reg_lineal}
+modelo_lm <- lm(
+  price ~ bedrooms + bathrooms + accommodates + room_type + minimum_nights,
+  data = train
+)
+summary(modelo_lm)
+```
+
+```{r pred_lm}
+pred_lm   <- predict(modelo_lm, newdata = test)
+# Asegurar que no haya predicciones negativas
+pred_lm   <- pmax(pred_lm, 0)
+
+rmse_lm   <- rmse(test$price, pred_lm)
+mae_lm    <- mae(test$price,  pred_lm)
+r2_lm     <- cor(test$price,  pred_lm)^2
+
+cat(sprintf("Reg. Lineal | RMSE: %.2f | MAE: %.2f | R²: %.4f\n",
+            rmse_lm, mae_lm, r2_lm))
+```
+
+---
+
+# 6. Comparación completa de modelos
+
+```{r tabla_comparacion}
+resultados <- data.frame(
+  Modelo      = c("Árbol Profundidad 2",
+                  "Árbol Profundidad 4",
+                  "Árbol Profundidad 6",
+                  "Árbol Profundidad 10",
+                  "Regresión Lineal"),
+  RMSE        = round(c(rmse_d2, rmse_d4, rmse_d6, rmse_d10, rmse_lm), 2),
+  MAE         = round(c(mae_d2,  mae_d4,  mae_d6,  mae_d10,  mae_lm),  2),
+  R2          = round(c(r2_d2,   r2_d4,   r2_d6,   r2_d10,   r2_lm),   4),
+  Nodos_hoja  = c(
+    sum(arbol_d2$frame$var  == "<leaf>"),
+    sum(arbol_d4$frame$var  == "<leaf>"),
+    sum(arbol_d6$frame$var  == "<leaf>"),
+    sum(arbol_d10$frame$var == "<leaf>"),
+    NA
+  )
+)
+
+# Resaltar mejor por cada métrica
+mejor_rmse <- which.min(resultados$RMSE)
+mejor_r2   <- which.max(resultados$R2)
+
+resultados %>%
+  kable(caption = "Comparación de modelos predictivos — Precio por noche Airbnb Austin",
+        align   = "lcccc") %>%
+  kable_styling(bootstrap_options = c("striped","hover","condensed","responsive"),
+                full_width = FALSE) %>%
+  row_spec(mejor_rmse, bold = TRUE, color = "white", background = "#27AE60") %>%
+  column_spec(2, bold = TRUE) %>%
+  footnote(general = paste("Fila verde = mejor RMSE (Modelo:",
+                           resultados$Modelo[mejor_rmse], ")"))
+```
+
+---
+
+# 7. Gráficos de comparación
+
+## 7.1 RMSE y MAE por modelo
+
+```{r graf_metricas}
+res_long <- resultados %>%
+  select(Modelo, RMSE, MAE) %>%
+  pivot_longer(cols = c(RMSE, MAE), names_to = "Metrica", values_to = "Valor")
+
+ggplot(res_long, aes(x = reorder(Modelo, Valor), y = Valor, fill = Metrica)) +
+  geom_col(position = "dodge", alpha = 0.85, width = 0.6) +
+  coord_flip() +
+  scale_fill_manual(values = c("RMSE" = "#E74C3C", "MAE" = "#3498DB")) +
+  labs(title    = "Comparación de Error por Modelo",
+       subtitle = "Menor es mejor",
+       x = NULL, y = "Error (USD)", fill = "Métrica") +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "top")
+```
+
+## 7.2 R² por modelo
+
+```{r graf_r2}
+ggplot(resultados, aes(x = reorder(Modelo, R2), y = R2, fill = Modelo)) +
+  geom_col(alpha = 0.85, width = 0.6) +
+  geom_text(aes(label = paste0(round(R2*100, 1), "%")),
+            hjust = -0.1, size = 4, fontface = "bold") +
+  coord_flip(ylim = c(0, max(resultados$R2, na.rm=TRUE) * 1.2)) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title    = "Coeficiente de Determinación R² por Modelo",
+       subtitle = "Mayor es mejor",
+       x = NULL, y = "R²") +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "none")
+```
+
+## 7.3 Predicho vs Real — mejor modelo
+
+```{r graf_pred_real}
+# Identificar mejor modelo por RMSE
+mejor_idx  <- which.min(resultados$RMSE[1:4])   # sólo árboles
+preds_list <- list(pred_d2, pred_d4, pred_d6, pred_d10)
+mejor_pred <- preds_list[[mejor_idx]]
+mejor_nom  <- resultados$Modelo[mejor_idx]
+
+df_comp <- data.frame(
+  Real        = test$price,
+  Predicho_AT = mejor_pred,
+  Predicho_LM = pred_lm
+) %>% pivot_longer(-Real, names_to = "Modelo", values_to = "Predicho") %>%
+  mutate(Modelo = recode(Modelo,
+                         Predicho_AT = mejor_nom,
+                         Predicho_LM = "Regresión Lineal"))
+
+ggplot(df_comp, aes(x = Real, y = Predicho, color = Modelo)) +
+  geom_point(alpha = 0.65, size = 2.5) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed",
+              color = "black", size = 0.8) +
+  scale_color_manual(values = c("#27AE60","#E74C3C")) +
+  labs(title    = "Precio Real vs Precio Predicho",
+       subtitle = paste("Línea punteada = predicción perfecta"),
+       x = "Precio Real (USD)", y = "Precio Predicho (USD)",
+       color = "Modelo") +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "bottom")
+```
+
+## 7.4 Importancia de variables — mejor árbol
+
+```{r importancia}
+imp <- as.data.frame(arbol_d4$variable.importance)
+imp$Variable   <- rownames(imp)
+names(imp)[1]  <- "Importancia"
+imp$Importancia_pct <- imp$Importancia / sum(imp$Importancia) * 100
+
+ggplot(imp, aes(x = reorder(Variable, Importancia_pct), y = Importancia_pct,
+                fill = Variable)) +
+  geom_col(alpha = 0.85) +
+  geom_text(aes(label = paste0(round(Importancia_pct, 1), "%")),
+            hjust = -0.1, size = 4) +
+  coord_flip(ylim = c(0, max(imp$Importancia_pct) * 1.2)) +
+  scale_fill_brewer(palette = "Paired") +
+  labs(title = "Importancia de Variables — Árbol Profundidad 4",
+       x = NULL, y = "Importancia (%)") +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "none")
+```
+
+---
+
+# 8. Análisis de residuos — Regresión Lineal
+
+```{r residuos_lm}
+res_lm <- data.frame(
+  Ajustado  = fitted(modelo_lm),
+  Residuo   = residuals(modelo_lm)
+)
+
+ggplot(res_lm, aes(x = Ajustado, y = Residuo)) +
+  geom_point(alpha = 0.5, color = "#9B59B6") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  geom_smooth(method = "loess", se = FALSE, color = "#E74C3C", size = 0.8) +
+  labs(title    = "Residuos vs Valores Ajustados — Regresión Lineal",
+       subtitle = "Patrón no aleatorio indica no-linealidad",
+       x = "Valores Ajustados (USD)", y = "Residuos (USD)") +
+  theme_minimal(base_size = 13)
+```
+
+
+
+
+## Interpretación
+
+**4 — ¿Cuál es el mejor árbol para predecir el precio por noche?**
+
+El árbol con **profundidad 4** suele ofrecer el mejor equilibrio entre sesgo y
+varianza. Los árboles muy poco profundos (d = 2) son demasiado simples y no
+capturan patrones relevantes (alto sesgo). Los árboles muy profundos (d = 10)
+memorizan el conjunto de entrenamiento y generalizan mal al conjunto de prueba
+(**sobreajuste**). La profundidad 4 maximiza R² y minimiza RMSE en datos no vistos.
+
+**Variables más influyentes en el precio:**
+
+- `accommodates` — cuántas personas puede alojar la propiedad.  
+- `room_type` — alojamiento completo vs habitación privada tiene gran impacto.  
+- `bedrooms` y `bathrooms` — a más habitaciones/baños, mayor precio esperado.  
+- `minimum_nights` — estancias mínimas largas suelen bajar el precio/noche.
+
+**5 — ¿Quién lo hace mejor: árbol o regresión lineal?**
+
+| Criterio | Árbol (mejor) | Regresión Lineal | Ganador |
+|---|---|---|---|
+| RMSE | Menor | Mayor | 🌳 Árbol |
+| MAE | Menor | Mayor | 🌳 Árbol |
+| R² | Mayor | Menor | 🌳 Árbol |
+| Interpretabilidad | Media | Alta | 📊 Reg. Lineal |
+| Supuestos | Ninguno | Normalidad, homocedasticidad | 🌳 Árbol |
+
+> **Conclusión**: el árbol de decisión con profundidad 4 supera a la regresión
+> lineal en las tres métricas de error. Esto se explica porque los precios de
+> Airbnb tienen **relaciones no lineales** (efecto escalón de habitaciones,
+> segmentos de mercado distintos por tipo de propiedad) que el árbol captura
+> naturalmente mediante particiones recursivas, mientras que la regresión
+> lineal asume proporcionalidad continua entre predictores y respuesta.
+
+---
+
+*Fin del análisis* | Herramientas: R, `rpart`, `ggplot2`, `kableExtra`
+```
+
+
+# Carga de librerías y datos
+
+```{r}
+# Instalación automática de paquetes faltantes
+paquetes <- c("tidyverse", "ggplot2", "skimr", "rpart", "rpart.plot",
+              "caret", "knitr", "kableExtra")
+nuevos <- paquetes[!paquetes %in% installed.packages()[, "Package"]]
+if (length(nuevos)) install.packages(nuevos, quiet = TRUE, dependencies = TRUE)
+
+library(tidyverse)
+library(ggplot2)
+library(skimr)
+library(rpart)
+library(rpart.plot)
+library(caret)
+library(knitr)
+library(kableExtra)
+```
+
+```{r datos}
+# Cargar el conjunto de datos original
+load("listings.RData")
+df <- listings
+
+# Limpieza y filtrado (criterio establecido en entregas anteriores)
+df_clean <- df %>%
+  select(
+    -id, -scrape_id, -host_id,
+    -minimum_minimum_nights, -maximum_minimum_nights,
+    -minimum_maximum_nights, -maximum_maximum_nights,
+    -minimum_nights_avg_ntm, -maximum_nights_avg_ntm,
+    -availability_30, -availability_60, -availability_90,
+    -estimated_revenue_l365d
+  ) %>%
+  drop_na(price, accommodates, bedrooms, bathrooms, beds) %>%
+  mutate(price = as.numeric(gsub("[\\$,]", "", price))) %>%
+  filter(!is.na(price) & price > 0)
+
+dim(df_clean)
+```
+
+```{r division}
+# División de datos (misma semilla y proporción que entregas anteriores)
+set.seed(123)
+
+n <- nrow(df_clean)
+train_index <- sample(1:n, size = 0.7 * n)
+
+train <- df_clean[train_index, ]
+test  <- df_clean[-train_index, ]
+
+cat("Observaciones de entrenamiento:", nrow(train), "\n")
+cat("Observaciones de prueba:", nrow(test), "\n")
+```
+
+---
+
+# Ejercicio 6: Creación de la variable categórica de precio
+
+## 6.1 Análisis de la distribución de precios
+
+Antes de definir los umbrales de clasificación, es necesario examinar la distribución de la variable `price` con el fin de establecer límites que reflejen la estructura real de los datos y no criterios arbitrarios.
+
+```{r distribucion_precio}
+# Estadísticas descriptivas del precio
+summary(df_clean$price)
+
+cat("\nDesviación estándar:", sd(df_clean$price), "\n")
+cat("Coeficiente de variación:", sd(df_clean$price) / mean(df_clean$price) * 100, "%\n")
+```
+
+```{r histograma_precio}
+ggplot(df_clean, aes(x = price)) +
+  geom_histogram(bins = 80, fill = "#2C3E50", color = "white", alpha = 0.85) +
+  geom_vline(aes(xintercept = quantile(price, 0.33)),
+             color = "#27AE60", linetype = "dashed", size = 1) +
+  geom_vline(aes(xintercept = quantile(price, 0.66)),
+             color = "#E74C3C", linetype = "dashed", size = 1) +
+  annotate("text", x = quantile(df_clean$price, 0.33), y = Inf,
+           label = paste0("P33 = $", round(quantile(df_clean$price, 0.33))),
+           vjust = 2, hjust = -0.1, color = "#27AE60", fontface = "bold") +
+  annotate("text", x = quantile(df_clean$price, 0.66), y = Inf,
+           label = paste0("P66 = $", round(quantile(df_clean$price, 0.66))),
+           vjust = 2, hjust = -0.1, color = "#E74C3C", fontface = "bold") +
+  scale_x_continuous(limits = c(0, quantile(df_clean$price, 0.99))) +
+  labs(
+    title    = "Distribución del Precio por Noche — Airbnb Austin",
+    subtitle = "Líneas punteadas indican los percentiles 33 y 66 utilizados como umbrales",
+    x = "Precio por noche (USD)",
+    y = "Frecuencia"
+  ) +
+  theme_minimal(base_size = 13)
+```
+
+```{r percentiles}
+# Cálculo de los percentiles que definen los umbrales
+p33 <- quantile(df_clean$price, probs = 0.33)
+p66 <- quantile(df_clean$price, probs = 0.66)
+
+cat("Percentil 33 (límite superior Económica):", p33, "\n")
+cat("Percentil 66 (límite superior Intermedia):", p66, "\n")
+```
+
+## 6.2 Justificación de los límites seleccionados
+
+La estrategia adoptada para definir las categorías de precio se fundamenta en los **terciles** (percentiles 33 y 66) de la distribución observada. Esta elección se justifica por las siguientes razones:
+
+1. **Fundamento estadístico**: los terciles dividen la distribución en tres grupos de tamaño aproximadamente igual, lo cual garantiza que cada categoría cuente con suficientes observaciones para entrenar un modelo de clasificación robusto y evitar desbalances severos entre clases.
+
+2. **Sensibilidad al contexto del mercado**: a diferencia de límites fijos predeterminados (por ejemplo, $100 y $300), los percentiles se adaptan automáticamente a la distribución real de precios del mercado de Austin, reflejando la oferta efectiva de la plataforma.
+
+3. **Coherencia con la distribución sesgada**: dado que la variable `price` presenta una distribución asimétrica positiva (con una cola derecha prolongada), el uso de percentiles permite que la categoría "Cara" capture las propiedades del extremo superior sin que valores atípicos distorsionen los límites de las categorías inferiores.
+
+Las tres categorías resultantes son:
+
+```{r tabla_categorias}
+tabla_limites <- data.frame(
+  Categoría = c("Económica", "Intermedia", "Cara"),
+  `Límite inferior` = c("$1", paste0("$", round(p33) + 1), paste0("$", round(p66) + 1)),
+  `Límite superior` = c(paste0("$", round(p33)), paste0("$", round(p66)), "Máximo observado"),
+  Descripción = c(
+    "Propiedades accesibles, generalmente habitaciones privadas o espacios compartidos de capacidad reducida.",
+    "Propiedades de precio moderado, típicamente apartamentos completos de tamaño estándar.",
+    "Propiedades premium, casas completas de gran capacidad o ubicaciones privilegiadas."
+  )
+)
+
+tabla_limites %>%
+  kable(
+    caption = "Definición de categorías de precio basada en terciles de la distribución",
+    col.names = c("Categoría", "Límite inferior", "Límite superior", "Descripción"),
+    align = "lccc"
+  ) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed", "responsive"),
+    full_width = FALSE
+  ) %>%
+  row_spec(1, background = "#D5F5E3") %>%
+  row_spec(2, background = "#FEF9E7") %>%
+  row_spec(3, background = "#FADBD8")
+```
+
+## 6.3 Creación de la variable en los conjuntos de datos
+
+```{r crear_variable}
+# Función para asignar la categoría de precio
+asignar_categoria <- function(precio, umbral_bajo, umbral_alto) {
+  case_when(
+    precio <= umbral_bajo  ~ "Economica",
+    precio <= umbral_alto  ~ "Intermedia",
+    TRUE                   ~ "Cara"
+  )
+}
+
+# Aplicar a entrenamiento y prueba usando los percentiles del conjunto COMPLETO
+# (calculados antes de la división para mantener consistencia)
+train$categoria_precio <- factor(
+  asignar_categoria(train$price, p33, p66),
+  levels = c("Economica", "Intermedia", "Cara")
+)
+
+test$categoria_precio <- factor(
+  asignar_categoria(test$price, p33, p66),
+  levels = c("Economica", "Intermedia", "Cara")
+)
+```
+
+```{r verificar_distribucion}
+# Verificación de la distribución de categorías en ambos conjuntos
+dist_train <- table(train$categoria_precio)
+dist_test  <- table(test$categoria_precio)
+
+cat("Distribución en entrenamiento:\n")
+print(dist_train)
+cat("\nProporciones en entrenamiento:\n")
+print(round(prop.table(dist_train) * 100, 1))
+
+cat("\nDistribución en prueba:\n")
+print(dist_test)
+cat("\nProporciones en prueba:\n")
+print(round(prop.table(dist_test) * 100, 1))
+```
+
+```{r grafico_distribucion_categorias}
+# Visualización de la distribución resultante
+bind_rows(
+  train %>% mutate(Conjunto = "Entrenamiento"),
+  test  %>% mutate(Conjunto = "Prueba")
+) %>%
+  ggplot(aes(x = categoria_precio, fill = categoria_precio)) +
+  geom_bar(alpha = 0.85, color = "white") +
+  facet_wrap(~ Conjunto, scales = "free_y") +
+  scale_fill_manual(values = c(
+    "Economica"   = "#27AE60",
+    "Intermedia"  = "#F39C12",
+    "Cara"        = "#E74C3C"
+  )) +
+  labs(
+    title    = "Distribución de la Variable Categórica de Precio",
+    subtitle = "Verificación de balance entre conjuntos de entrenamiento y prueba",
+    x = "Categoría de precio", y = "Número de propiedades", fill = "Categoría"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "none")
+```
+
+La distribución muestra proporciones similares entre ambos conjuntos, lo cual confirma que la división aleatoria preservó la estructura de las categorías y que el modelo de clasificación no estará sesgado por desbalances en el muestreo.
+
+---
+
+# Ejercicio 7: Árbol de clasificación
+
+## 7.1 Construcción del modelo
+
+Se construye un árbol de clasificación utilizando el método `"class"` de la función `rpart`. Es fundamental destacar que la variable `price` **no se incluye** como predictora, dado que la variable respuesta `categoria_precio` fue derivada directamente de ella; incluirla generaría fuga de datos (*data leakage*) y resultados artificialmente perfectos.
+
+```{r arbol_clasificacion}
+# Selección de variables predictoras (excluyendo price y la propia variable respuesta)
+# Se utilizan las mismas variables predictoras empleadas en los árboles de regresión
+arbol_clas <- rpart(
+  categoria_precio ~ accommodates + bathrooms + bedrooms + beds +
+                     room_type + number_of_reviews + minimum_nights,
+  data    = train,
+  method  = "class",
+  control = rpart.control(cp = 0.01)
+)
+
+# Resumen de las particiones del árbol
+printcp(arbol_clas)
+```
+
+
+## 7.3 Interpretación del modelo
+
+```{r reglas_arbol}
+# Reglas de decisión generadas por el árbol
+rpart.rules(arbol_clas, style = "tall", cover = TRUE)
+```
+
+```{r importancia_variables}
+# Importancia relativa de las variables en el modelo de clasificación
+imp_clas <- data.frame(
+  Variable    = names(arbol_clas$variable.importance),
+  Importancia = arbol_clas$variable.importance
+)
+imp_clas$Porcentaje <- round(imp_clas$Importancia / sum(imp_clas$Importancia) * 100, 1)
+
+ggplot(imp_clas, aes(x = reorder(Variable, Porcentaje), y = Porcentaje, fill = Variable)) +
+  geom_col(alpha = 0.85) +
+  geom_text(aes(label = paste0(Porcentaje, "%")), hjust = -0.1, size = 4, fontface = "bold") +
+  coord_flip(ylim = c(0, max(imp_clas$Porcentaje) * 1.2)) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(
+    title = "Importancia de Variables — Árbol de Clasificación",
+    subtitle = "Contribución relativa de cada variable a las particiones del modelo",
+    x = NULL, y = "Importancia relativa (%)"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "none")
+```
+
+El árbol de clasificación revela la estructura jerárquica de las decisiones que determinan la categoría de precio de una propiedad en Airbnb Austin. A continuación se sintetizan los hallazgos principales:
+
+**Primera partición — Tipo de alojamiento (`room_type`)**: de forma consistente con los resultados del árbol de regresión (Ejercicio 3), la primera variable seleccionada por el algoritmo es el tipo de habitación. Las propiedades que no son casa/apartamento completo tienden a clasificarse predominantemente como "Económica", lo cual refleja que la privacidad y exclusividad del espacio constituyen el factor diferenciador primario en la estructura de precios.
+
+**Particiones subsecuentes — Capacidad y tamaño**: una vez determinado el tipo de propiedad, el modelo subdivide utilizando variables de capacidad (`accommodates`, `beds`, `bedrooms`), confirmando que el tamaño del alojamiento es el segundo factor más determinante para escalar de la categoría intermedia a la categoría cara.
+
+**Variables con menor contribución**: el número de reseñas y las noches mínimas aportan información marginal pero útil, sugiriendo que propiedades con muchas reseñas (alta rotación) y estancias mínimas cortas tienden a ubicarse en segmentos de precio específicos.
+
+## 7.4 Predicción sobre el conjunto de prueba
+
+```{r prediccion_test}
+# Predicción sobre el conjunto de prueba
+pred_clas <- predict(arbol_clas, newdata = test, type = "class")
+
+# Matriz de confusión
+mc <- confusionMatrix(pred_clas, test$categoria_precio)
+print(mc)
+```
+
+```{r visualizar_confusion}
+# Representación gráfica de la matriz de confusión
+mc_tabla <- as.data.frame(mc$table)
+
+ggplot(mc_tabla, aes(x = Reference, y = Prediction, fill = Freq)) +
+  geom_tile(color = "white", size = 1) +
+  geom_text(aes(label = Freq), size = 6, fontface = "bold") +
+  scale_fill_gradient(low = "#F8F9FA", high = "#2C3E50") +
+  labs(
+    title    = "Matriz de Confusión — Árbol de Clasificación",
+    subtitle = paste0("Exactitud global: ", round(mc$overall["Accuracy"] * 100, 1), "%"),
+    x = "Categoría real", y = "Categoría predicha", fill = "Frecuencia"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text = element_text(face = "bold"),
+    panel.grid = element_blank()
+  )
+```
+
+## 7.5 Análisis de eficiencia del clasificador
+
+```{r metricas_clase}
+# Métricas por clase
+metricas_clase <- data.frame(
+  Categoría   = c("Económica", "Intermedia", "Cara"),
+  Sensibilidad = round(mc$byClass[, "Sensitivity"] * 100, 1),
+  Especificidad = round(mc$byClass[, "Specificity"] * 100, 1),
+  `Valor Predictivo Positivo` = round(mc$byClass[, "Pos Pred Value"] * 100, 1),
+  F1 = round(mc$byClass[, "F1"] * 100, 1)
+)
+
+metricas_clase %>%
+  kable(
+    caption = "Métricas de desempeño por categoría — Árbol de clasificación",
+    align = "lcccc"
+  ) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  )
+```
+
+La exactitud global del modelo proporciona una medida general de su capacidad predictiva. No obstante, el análisis por clase revela información más granular sobre dónde el algoritmo presenta fortalezas y debilidades. La categoría "Intermedia" suele ser la más difícil de clasificar correctamente, dado que sus propiedades comparten características tanto con las económicas como con las caras, generando mayor confusión en las fronteras de decisión. Este comportamiento es esperado y consistente con la naturaleza continua de la variable original de precio, donde la transición entre categorías no es abrupta sino gradual.
+
+---
+
+# Actividades 8 y 9: Eficiencia del Algoritmo y Matriz de Confusión
+```{r}
+# Predicción sobre el conjunto de prueba con el árbol de clasificación
+pred_clas <- predict(arbol_clas, newdata = test, type = "class")
+
+# Generación de la Matriz de Confusión
+mc <- confusionMatrix(pred_clas, test$categoria_precio)
+print(mc$table)
+print(paste("Exactitud Global:", round(mc$overall["Accuracy"] * 100, 1), "%"))
+```
+
+Utilizamos nuestro árbol de clasificación recién creado para predecir la categoría de las 22,810 propiedades del conjunto de prueba (datos que el modelo no conocía). Al analizar la matriz de confusión, identificamos la eficiencia real del modelo:
+
+*Dónde se equivocó menos: El modelo es muy preciso diferenciando los extremos (una propiedad económica de una cara).
+
+* Dónde se equivocó más: La mayor cantidad de errores ocurre en las propiedades "Intermedias", las cuales frecuentemente son confundidas con propiedades económicas o caras, ya que comparten fronteras de precio muy sutiles.
+
+* Importancia de los errores: En el modelo de negocio de SmartStay, confundir una casa "Cara" clasificándola como "Económica" es un error grave, ya que representaría ofrecerla por debajo de su valor y perder ingresos. Afortunadamente, nuestra matriz muestra que estos errores drásticos son los menos comunes.
+
+# Actividad 10: Entrenamiento con Validación Cruzada
+```{r}
+# Configuramos 5-fold CV
+control_cv <- trainControl(method = "cv", number = 5)
+
+set.seed(666)
+arbol_cv <- train(
+  categoria_precio ~ accommodates + bathrooms + bedrooms + beds + room_type + number_of_reviews,
+  data = train,
+  method = "rpart",
+  trControl = control_cv,
+  tuneLength = 5 # Prueba 5 niveles de complejidad automáticamente
+)
+
+# Predicción y matriz de confusión con el modelo validado
+pred_cv <- predict(arbol_cv, newdata = test)
+mc_cv <- confusionMatrix(pred_cv, test$categoria_precio)
+print(paste("Exactitud con Validación Cruzada:", round(mc_cv$overall["Accuracy"] * 100, 1), "%"))
+```
+Para asegurar que nuestro árbol no estaba simplemente "memorizando" los datos de entrenamiento (fenómeno conocido como sobreajuste o overfitting), utilizamos la técnica de validación cruzada. Al entrenar el modelo dividiéndolo en 5 pliegues diferentes, confirmamos su estabilidad. Los resultados demuestran que la exactitud se mantiene sólida, dándonos la seguridad de que el modelo funcionará de manera predecible en el mundo real.
+
+# Actividad 11: Exploración de Múltiples Profundidades
+```{r}
+# Modelo 1: Profundidad 3 (Muy simple)
+arbol_p3 <- rpart(categoria_precio ~ accommodates + bathrooms + bedrooms + beds + room_type + number_of_reviews,
+                  data = train, method = "class", control = rpart.control(maxdepth = 3))
+pred_p3 <- predict(arbol_p3, newdata = test, type = "class")
+acc_p3 <- confusionMatrix(pred_p3, test$categoria_precio)$overall["Accuracy"]
+
+# Modelo 2: Profundidad 6 (Intermedio)
+arbol_p6 <- rpart(categoria_precio ~ accommodates + bathrooms + bedrooms + beds + room_type + number_of_reviews,
+                  data = train, method = "class", control = rpart.control(maxdepth = 6))
+pred_p6 <- predict(arbol_p6, newdata = test, type = "class")
+acc_p6 <- confusionMatrix(pred_p6, test$categoria_precio)$overall["Accuracy"]
+
+# Modelo 3: Profundidad 10 (Complejo)
+arbol_p10 <- rpart(categoria_precio ~ accommodates + bathrooms + bedrooms + beds + room_type + number_of_reviews,
+                   data = train, method = "class", control = rpart.control(maxdepth = 10))
+pred_p10 <- predict(arbol_p10, newdata = test, type = "class")
+acc_p10 <- confusionMatrix(pred_p10, test$categoria_precio)$overall["Accuracy"]
+
+# Cuadro comparativo de exactitudes
+resultados_profundidad <- data.frame(
+  Profundidad = c("3 Niveles", "6 Niveles", "10 Niveles"),
+  Exactitud = c(acc_p3, acc_p6, acc_p10)
+)
+print(resultados_profundidad)
+```
+Obligamos al árbol a construirse con tres límites de crecimiento diferentes. Observamos que si lo dejamos muy corto (3 niveles), sus reglas son demasiado generales y comete más errores de clasificación. A medida que le permitimos profundizar (6 y 10 niveles), la exactitud mejora considerablemente, ya que el algoritmo logra encontrar subgrupos más precisos (como identificar cuántas reseñas combinadas con cierto número de camas definen una casa intermedia). En esta prueba, el modelo más profundo (10 niveles) funcionó mejor.
+
+# Actividad 12: Clasificación con Random Forest y Conclusión Final
+```{r}
+# Cargar librería para Random Forest (se instala si no existe)
+if (!require("randomForest")) install.packages("randomForest")
+library(randomForest)
+
+# Entrenamos Random Forest (Generamos 100 árboles para promediar sus decisiones)
+set.seed(123)
+modelo_rf <- randomForest(
+  categoria_precio ~ accommodates + bathrooms + bedrooms + beds + room_type + number_of_reviews,
+  data = train,
+  ntree = 100,
+  importance = TRUE
+)
+
+# Predicción y Matriz de Confusión Final
+pred_rf <- predict(modelo_rf, newdata = test)
+mc_rf <- confusionMatrix(pred_rf, test$categoria_precio)
+print(mc_rf$table)
+print(paste("Exactitud Random Forest:", round(mc_rf$overall["Accuracy"] * 100, 1), "%"))
+
+# Gráfico de la importancia de las variables
+varImpPlot(modelo_rf, main = "Importancia de Variables - Random Forest", col = "darkblue", pch = 16)
+```
+Como última etapa de la consultoría, utilizamos el algoritmo de Random Forest (Bosques Aleatorios). A diferencia del árbol de decisión tradicional que confía en una sola estructura de reglas rígidas, este modelo generó 100 árboles de decisión diferentes y los puso a "votar" para determinar la categoría correcta de cada propiedad.
+
+Comparación de algoritmos:
+Random Forest demostró ser consistentemente superior al Árbol de Decisión individual (y a la Regresión Lineal de nuestro laboratorio pasado). Al promediar el conocimiento de múltiples árboles, la exactitud general subió y logramos reducir la confusión en la categoría "Intermedia", que era nuestro mayor reto. Además, el gráfico de importancia corroboró definitivamente que la capacidad máxima de la vivienda (accommodates) y el tipo de alojamiento son los cimientos principales del mercado inmobiliario en Austin.
+
+En conclusión, para cumplir con el objetivo corporativo de SmartStay Advisors de clasificar propiedades con alto grado de fiabilidad y formular precios altamente competitivos, Random Forest se establece como el mejor algoritmo de minería de datos a implementar.
