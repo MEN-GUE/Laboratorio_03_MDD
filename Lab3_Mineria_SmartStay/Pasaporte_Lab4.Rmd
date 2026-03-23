@@ -22,11 +22,20 @@ knitr::opts_chunk$set(
 ```
 
 ```{r librerias}
-# Instalación automática de paquetes faltantes
+# Configurar repositorio CRAN
+options(repos = c(CRAN = "https://cloud.r-project.org"))
+
+# Instalar dependencias críticas de caret que suelen faltar
+deps_caret <- c("hardhat", "gower", "e1071", "recipes", "ModelMetrics",
+                "ipred", "timeDate", "prodlim", "lava", "pROC", "plyr")
+faltantes <- deps_caret[!deps_caret %in% installed.packages()[, "Package"]]
+if (length(faltantes)) install.packages(faltantes)
+
+# Instalar el resto de paquetes necesarios
 paquetes <- c("tidyverse", "ggplot2", "skimr", "knitr", "kableExtra",
               "rpart", "rpart.plot", "caret", "Metrics", "randomForest", "tidyr")
 nuevos <- paquetes[!paquetes %in% installed.packages()[, "Package"]]
-if (length(nuevos)) install.packages(nuevos, quiet = TRUE, dependencies = TRUE)
+if (length(nuevos)) install.packages(nuevos, dependencies = TRUE)
 
 library(tidyverse)
 library(ggplot2)
@@ -312,20 +321,21 @@ ggplot(resultados_reg, aes(x = reorder(Modelo, R2), y = R2, fill = Modelo)) +
 ```
 
 ```{r importancia_mejor_arbol}
-# Importancia de variables del mejor árbol de regresión
-mejor_arbol_reg <- list(arbol_base, arbol_d2, arbol_d4, arbol_d6, arbol_d8, arbol_d10)[[mejor_rmse_reg]]
+# Importancia de variables — Árbol Profundidad 4
+imp_raw <- arbol_d4$variable.importance
+imp_nombres <- as.character(names(imp_raw))
+imp_valores <- as.numeric(imp_raw)
+imp_pct     <- imp_valores / sum(imp_valores) * 100
 
-imp <- as.data.frame(mejor_arbol_reg$variable.importance)
-imp$Variable   <- rownames(imp)
-names(imp)[1]  <- "Importancia"
-imp$Importancia_pct <- imp$Importancia / sum(imp$Importancia) * 100
+imp_df <- data.frame(nombre = imp_nombres, porcentaje = imp_pct,
+                     stringsAsFactors = FALSE)
 
-ggplot(imp, aes(x = reorder(Variable, Importancia_pct), y = Importancia_pct, fill = Variable)) +
+ggplot(imp_df, aes(x = reorder(nombre, porcentaje), y = porcentaje, fill = nombre)) +
   geom_col(alpha = 0.85) +
-  geom_text(aes(label = paste0(round(Importancia_pct, 1), "%")), hjust = -0.1, size = 4) +
-  coord_flip(ylim = c(0, max(imp$Importancia_pct) * 1.2)) +
+  geom_text(aes(label = paste0(round(porcentaje, 1), "%")), hjust = -0.1, size = 4) +
+  coord_flip(ylim = c(0, max(imp_df$porcentaje) * 1.2)) +
   scale_fill_brewer(palette = "Paired") +
-  labs(title = paste("Importancia de Variables —", resultados_reg$Modelo[mejor_rmse_reg]),
+  labs(title = "Importancia de Variables — Árbol Profundidad 4",
        x = NULL, y = "Importancia (%)") +
   theme_minimal(base_size = 13) +
   theme(legend.position = "none")
@@ -581,7 +591,7 @@ rpart.plot(arbol_clas,
            fallen.leaves = TRUE,
            roundint      = FALSE,
            main          = "Árbol de Clasificación — Categoría de Precio por Noche",
-           box.palette   = c("#27AE60", "#F39C12", "#E74C3C"),
+           box.palette   = list("#27AE60", "#F39C12", "#E74C3C"),
            cex           = 0.75,
            under         = TRUE)
 ```
@@ -800,7 +810,7 @@ arbol_mejor_clas <- rpart(
 rpart.plot(arbol_mejor_clas,
            type = 4, extra = 104, fallen.leaves = TRUE, roundint = FALSE,
            main = paste("Mejor Árbol de Clasificación — Profundidad", mejor_prof),
-           box.palette = c("#27AE60", "#F39C12", "#E74C3C"),
+           box.palette = list("#27AE60", "#F39C12", "#E74C3C"),
            cex = 0.65, under = TRUE)
 ```
 
