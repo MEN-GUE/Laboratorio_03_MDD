@@ -874,3 +874,193 @@ por el solapamiento de perfiles en la zona media de la distribución de precios.
 
 ---
 
+# 7. Análisis de Sobreajuste 
+
+## 7.1 Comparación Train vs. Test
+
+Para diagnosticar si el modelo está sobreajustado, se evalúa el clasificador Naive Bayes
+tanto en el conjunto de entrenamiento como en el de prueba y se comparan las métricas
+de exactitud.
+
+```{r overfitting_nb}
+# Predicciones en entrenamiento
+pred_nb_train <- predict(modelo_nb_clas, newdata = train_nb, type = "class")
+acc_train_nb  <- mean(pred_nb_train == train_nb$categoria_precio)
+
+# Predicciones en prueba (ya calculadas)
+acc_test_nb   <- as.numeric(exactitud_nb)
+
+diferencia_acc <- acc_train_nb - acc_test_nb
+
+sobreajuste_df <- data.frame(
+  Conjunto   = c("Entrenamiento", "Prueba"),
+  Exactitud  = c(round(acc_train_nb * 100, 2),
+                 round(acc_test_nb  * 100, 2))
+)
+
+kable(sobreajuste_df,
+      col.names = c("Conjunto", "Exactitud (%)"),
+      caption = "Exactitud en Entrenamiento vs. Prueba — Naive Bayes") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+
+cat(sprintf("\nDiferencia (train - test): %.2f pp\n", diferencia_acc * 100))
+```
+
+```{r viz_overfitting, fig.height=4}
+sobreajuste_df %>%
+  ggplot(aes(x = Conjunto, y = Exactitud, fill = Conjunto)) +
+  geom_col(width = 0.5, alpha = 0.85, show.legend = FALSE) +
+  geom_text(aes(label = paste0(round(Exactitud, 1), "%")),
+            vjust = -0.5, size = 5, fontface = "bold") +
+  scale_fill_manual(values = c("Entrenamiento" = "#2196F3", "Prueba" = "#FF9800")) +
+  labs(
+    title    = "Exactitud Train vs. Test — Naive Bayes",
+    subtitle = paste0("Diferencia: ",
+                      round(diferencia_acc * 100, 2), " pp"),
+    x = NULL, y = "Exactitud (%)"
+  ) +
+  theme_minimal(base_size = 13) +
+  ylim(0, 100)
+```
+
+## 7.2 Discusión
+
+Naive Bayes tiene una tendencia estructural al **subajuste** más que al sobreajuste, y
+esto se fundamenta en tres razones.
+
+**Razón 1 — Independencia condicional.** El supuesto de independencia entre predictores
+impide que el modelo aprenda relaciones conjuntas complejas. Un modelo que no puede
+representar la función subyacente de forma compleja difícilmente memoriza el
+ruido del entrenamiento.
+
+**Razón 2 — Estimación paramétrica por tablas de frecuencia.** Las probabilidades
+condicionales se estiman a partir de recuentos discretos, no de optimizaciones iterativas
+ajustadas al conjunto de entrenamiento. Esto limita el grado de libertad del modelo y
+reduce el riesgo de sobreajuste.
+
+**Razón 3 — Suavizado de Laplace.** El parámetro $\alpha = 1$ añade un conteo ficticio
+que regulariza las estimaciones de probabilidad, evitando que la verosimilitud de
+combinaciones poco frecuentes colapse a cero o se dispare artificialmente.
+
+Una diferencia de exactitud entre entrenamiento y prueba inferior a 5 puntos
+porcentuales es, en general, indicativa de un modelo bien generalizado. Si la diferencia
+obtenida se ubica dentro de ese rango, se concluye que **el modelo no presenta
+sobreajuste**. Si la diferencia supera ese umbral, podría existir un leve ajuste excesivo
+derivado de categorías muy poco frecuentes en la discretización de variables.
+
+En cualquier caso, la validación cruzada de la Sección 8 ofrece una estimación más
+robusta del error de generalización.
+
+---
+
+# 8. Validación Cruzada y Comparación (Actividad 8)
+
+## 8.1 Entrenamiento con Validación Cruzada (k = 10)
+
+Se entrena el modelo Naive Bayes mediante validación cruzada estratificada de 10 pliegues
+(*k = 10*) utilizando el paquete `caret`. La estratificación garantiza que cada pliegue
+refleje la proporción de clases del conjunto completo.
+
+```{r cv_nb, cache=TRUE}
+set.seed(123)
+
+ctrl_cv <- trainControl(
+  method          = "cv",
+  number          = 10,
+  classProbs      = TRUE,
+  summaryFunction = multiClassSummary,
+  savePredictions = "final"
+)
+
+# Preparar data frame con solo las variables necesarias para caret
+train_nb_cv <- train_nb %>%
+  select(categoria_precio, room_type,
+         accommodates_cat, bathrooms_cat,
+         bedrooms_cat, beds_cat, min_nights_cat) %>%
+  drop_na()
+
+modelo_nb_cv <- train(
+  categoria_precio ~ .,
+  data      = train_nb_cv,
+  method    = "naive_bayes",
+  trControl = ctrl_cv,
+  tuneGrid  = data.frame(laplace = 1, usekernel = FALSE, adjust = 1)
+)
+
+cat("===== RESULTADOS — Validación Cruzada (k = 10) =====\n")
+print(modelo_nb_cv$results[, c("laplace", "usekernel", "Accuracy", "Kappa")])
+```
+
+## 8.2 Evaluación en Test del Modelo CV
+
+```{r eval_cv_test}
+test_nb_cv <- test_nb %>%
+  select(categoria_precio, room_type,
+         accommodates_cat, bathrooms_cat,
+         bedrooms_cat, beds_cat, min_nights_cat) %>%
+  drop_na()
+
+pred_cv_test <- predict(modelo_nb_cv, newdata = test_nb_cv)
+mc_cv        <- confusionMatrix(pred_cv_test, test_nb_cv$categoria_precio)
+
+acc_cv_test  <- mc_cv$overall["Accuracy"]
+kap_cv_test  <- mc_cv$overall["Kappa"]
+
+cat(sprintf("Exactitud CV (test): %.2f%%\n", acc_cv_test * 100))
+cat(sprintf("Kappa CV (test):     %.4f\n",   kap_cv_test))
+```
+
+## 8.3 Comparación: Modelo Simple vs. Modelo con CV
+
+```{r comp_cv_simple}
+comp_cv <- data.frame(
+  Enfoque              = c("Naive Bayes Simple\n(sin CV)",
+                           "Naive Bayes con CV\n(k = 10)"),
+  Exactitud_Train_CV   = c(paste0(round(acc_train_nb * 100, 2), "%"),
+                           paste0(round(modelo_nb_cv$results$Accuracy * 100, 2), "%")),
+  Exactitud_Test       = c(paste0(round(acc_test_nb  * 100, 2), "%"),
+                           paste0(round(acc_cv_test  * 100, 2), "%")),
+  Kappa_Test           = c(round(kappa_nb,    4),
+                           round(kap_cv_test, 4))
+)
+
+kable(comp_cv,
+      col.names = c("Enfoque", "Exactitud CV / Train", "Exactitud Test", "Kappa Test"),
+      caption   = "Modelo Simple vs. Modelo con Validación Cruzada") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+```{r viz_comp_cv, fig.height=4}
+data.frame(
+  Modelo     = c("NB Simple", "NB con CV"),
+  Exactitud  = c(acc_test_nb * 100, acc_cv_test * 100)
+) %>%
+  ggplot(aes(x = Modelo, y = Exactitud, fill = Modelo)) +
+  geom_col(width = 0.5, alpha = 0.85, show.legend = FALSE) +
+  geom_text(aes(label = paste0(round(Exactitud, 1), "%")),
+            vjust = -0.5, size = 5, fontface = "bold") +
+  scale_fill_manual(values = c("NB Simple" = "#9C27B0", "NB con CV" = "#009688")) +
+  labs(title    = "Exactitud en Prueba: NB Simple vs. NB con CV",
+       subtitle = "Evaluados sobre el mismo conjunto de prueba",
+       x = NULL, y = "Exactitud (%)") +
+  theme_minimal(base_size = 13) +
+  ylim(0, 100)
+```
+
+## 8.4 Discusión
+
+La validación cruzada no altera los parámetros del modelo Naive Bayes, sino que ofrece
+una **estimación más honesta del error de generalización** al evaluar el modelo en datos
+que no participaron en su ajuste durante cada pliegue.
+
+Si la exactitud del modelo con CV en test es similar a la del modelo simple, se confirma
+que el modelo original ya generalizaba adecuadamente. Una discrepancia grande indicaría
+que la partición 70/30 original era particularmente favorable o desfavorable.
+
+En la práctica, Naive Bayes es uno de los algoritmos que menos se beneficia de la
+validación cruzada en términos de mejora de exactitud (pues no tiene parámetros que
+optimizar en múltiples épocas), pero sí proporciona un intervalo de confianza más
+realista del desempeño esperado en producción.
+
+---
+
