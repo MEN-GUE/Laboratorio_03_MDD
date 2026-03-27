@@ -1,0 +1,466 @@
+% Options for packages loaded elsewhere
+\PassOptionsToPackage{unicode}{hyperref}
+\PassOptionsToPackage{hyphens}{url}
+\documentclass[
+]{article}
+\usepackage{xcolor}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\setcounter{secnumdepth}{-\maxdimen} % remove section numbering
+\usepackage{iftex}
+\ifPDFTeX
+  \usepackage[T1]{fontenc}
+  \usepackage[utf8]{inputenc}
+  \usepackage{textcomp} % provide euro and other symbols
+\else % if luatex or xetex
+  \usepackage{unicode-math} % this also loads fontspec
+  \defaultfontfeatures{Scale=MatchLowercase}
+  \defaultfontfeatures[\rmfamily]{Ligatures=TeX,Scale=1}
+\fi
+\usepackage{lmodern}
+\ifPDFTeX\else
+  % xetex/luatex font selection
+\fi
+% Use upquote if available, for straight quotes in verbatim environments
+\IfFileExists{upquote.sty}{\usepackage{upquote}}{}
+\IfFileExists{microtype.sty}{% use microtype if available
+  \usepackage[]{microtype}
+  \UseMicrotypeSet[protrusion]{basicmath} % disable protrusion for tt fonts
+}{}
+\makeatletter
+\@ifundefined{KOMAClassName}{% if non-KOMA class
+  \IfFileExists{parskip.sty}{%
+    \usepackage{parskip}
+  }{% else
+    \setlength{\parindent}{0pt}
+    \setlength{\parskip}{6pt plus 2pt minus 1pt}}
+}{% if KOMA class
+  \KOMAoptions{parskip=half}}
+\makeatother
+\usepackage{color}
+\usepackage{fancyvrb}
+\newcommand{\VerbBar}{|}
+\newcommand{\VERB}{\Verb[commandchars=\\\{\}]}
+\DefineVerbatimEnvironment{Highlighting}{Verbatim}{commandchars=\\\{\}}
+% Add ',fontsize=\small' for more characters per line
+\usepackage{framed}
+\definecolor{shadecolor}{RGB}{248,248,248}
+\newenvironment{Shaded}{\begin{snugshade}}{\end{snugshade}}
+\newcommand{\AlertTok}[1]{\textcolor[rgb]{0.94,0.16,0.16}{#1}}
+\newcommand{\AnnotationTok}[1]{\textcolor[rgb]{0.56,0.35,0.01}{\textbf{\textit{#1}}}}
+\newcommand{\AttributeTok}[1]{\textcolor[rgb]{0.13,0.29,0.53}{#1}}
+\newcommand{\BaseNTok}[1]{\textcolor[rgb]{0.00,0.00,0.81}{#1}}
+\newcommand{\BuiltInTok}[1]{#1}
+\newcommand{\CharTok}[1]{\textcolor[rgb]{0.31,0.60,0.02}{#1}}
+\newcommand{\CommentTok}[1]{\textcolor[rgb]{0.56,0.35,0.01}{\textit{#1}}}
+\newcommand{\CommentVarTok}[1]{\textcolor[rgb]{0.56,0.35,0.01}{\textbf{\textit{#1}}}}
+\newcommand{\ConstantTok}[1]{\textcolor[rgb]{0.56,0.35,0.01}{#1}}
+\newcommand{\ControlFlowTok}[1]{\textcolor[rgb]{0.13,0.29,0.53}{\textbf{#1}}}
+\newcommand{\DataTypeTok}[1]{\textcolor[rgb]{0.13,0.29,0.53}{#1}}
+\newcommand{\DecValTok}[1]{\textcolor[rgb]{0.00,0.00,0.81}{#1}}
+\newcommand{\DocumentationTok}[1]{\textcolor[rgb]{0.56,0.35,0.01}{\textbf{\textit{#1}}}}
+\newcommand{\ErrorTok}[1]{\textcolor[rgb]{0.64,0.00,0.00}{\textbf{#1}}}
+\newcommand{\ExtensionTok}[1]{#1}
+\newcommand{\FloatTok}[1]{\textcolor[rgb]{0.00,0.00,0.81}{#1}}
+\newcommand{\FunctionTok}[1]{\textcolor[rgb]{0.13,0.29,0.53}{\textbf{#1}}}
+\newcommand{\ImportTok}[1]{#1}
+\newcommand{\InformationTok}[1]{\textcolor[rgb]{0.56,0.35,0.01}{\textbf{\textit{#1}}}}
+\newcommand{\KeywordTok}[1]{\textcolor[rgb]{0.13,0.29,0.53}{\textbf{#1}}}
+\newcommand{\NormalTok}[1]{#1}
+\newcommand{\OperatorTok}[1]{\textcolor[rgb]{0.81,0.36,0.00}{\textbf{#1}}}
+\newcommand{\OtherTok}[1]{\textcolor[rgb]{0.56,0.35,0.01}{#1}}
+\newcommand{\PreprocessorTok}[1]{\textcolor[rgb]{0.56,0.35,0.01}{\textit{#1}}}
+\newcommand{\RegionMarkerTok}[1]{#1}
+\newcommand{\SpecialCharTok}[1]{\textcolor[rgb]{0.81,0.36,0.00}{\textbf{#1}}}
+\newcommand{\SpecialStringTok}[1]{\textcolor[rgb]{0.31,0.60,0.02}{#1}}
+\newcommand{\StringTok}[1]{\textcolor[rgb]{0.31,0.60,0.02}{#1}}
+\newcommand{\VariableTok}[1]{\textcolor[rgb]{0.00,0.00,0.00}{#1}}
+\newcommand{\VerbatimStringTok}[1]{\textcolor[rgb]{0.31,0.60,0.02}{#1}}
+\newcommand{\WarningTok}[1]{\textcolor[rgb]{0.56,0.35,0.01}{\textbf{\textit{#1}}}}
+\usepackage{graphicx}
+\makeatletter
+\newsavebox\pandoc@box
+\newcommand*\pandocbounded[1]{% scales image to fit in text height/width
+  \sbox\pandoc@box{#1}%
+  \Gscale@div\@tempa{\textheight}{\dimexpr\ht\pandoc@box+\dp\pandoc@box\relax}%
+  \Gscale@div\@tempb{\linewidth}{\wd\pandoc@box}%
+  \ifdim\@tempb\p@<\@tempa\p@\let\@tempa\@tempb\fi% select the smaller of both
+  \ifdim\@tempa\p@<\p@\scalebox{\@tempa}{\usebox\pandoc@box}%
+  \else\usebox{\pandoc@box}%
+  \fi%
+}
+% Set default figure placement to htbp
+\def\fps@figure{htbp}
+\makeatother
+\setlength{\emergencystretch}{3em} % prevent overfull lines
+\providecommand{\tightlist}{%
+  \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{multirow}
+\usepackage{wrapfig}
+\usepackage{float}
+\usepackage{colortbl}
+\usepackage{pdflscape}
+\usepackage{tabu}
+\usepackage{threeparttable}
+\usepackage{threeparttablex}
+\usepackage[normalem]{ulem}
+\usepackage{makecell}
+\usepackage{xcolor}
+\usepackage{bookmark}
+\IfFileExists{xurl.sty}{\usepackage{xurl}}{} % add URL line breaks if available
+\urlstyle{same}
+\hypersetup{
+  pdftitle={Pasaporte\_Lab5: Naive Bayes},
+  pdfauthor={Alejandro Antón, Juan Fernando, Fernando Mendoza},
+  hidelinks,
+  pdfcreator={LaTeX via pandoc}}
+
+\title{Pasaporte\_Lab5: Naive Bayes}
+\author{Alejandro Antón, Juan Fernando, Fernando Mendoza}
+\date{2026-03-27}
+
+\begin{document}
+\maketitle
+
+\section{Preparación de Librerías y
+Datos}\label{preparaciuxf3n-de-libreruxedas-y-datos}
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\CommentTok{\# Librerías necesarias}
+\FunctionTok{library}\NormalTok{(tidyverse)}
+\FunctionTok{library}\NormalTok{(e1071)          }
+\FunctionTok{library}\NormalTok{(caret)          }
+\FunctionTok{library}\NormalTok{(ggplot2)}
+\FunctionTok{library}\NormalTok{(knitr)}
+\FunctionTok{library}\NormalTok{(kableExtra)}
+
+\CommentTok{\# Cargar datos}
+\FunctionTok{load}\NormalTok{(}\StringTok{"listings.RData"}\NormalTok{)}
+\end{Highlighting}
+\end{Shaded}
+
+\section{Preprocesamiento de Datos}\label{preprocesamiento-de-datos}
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\CommentTok{\# Limpiar la columna price: remover \textquotesingle{}$\textquotesingle{} y \textquotesingle{},\textquotesingle{} y convertir a numérico}
+\NormalTok{df\_limpio }\OtherTok{\textless{}{-}}\NormalTok{ listings }\SpecialCharTok{\%\textgreater{}\%}
+  \FunctionTok{mutate}\NormalTok{(}\AttributeTok{price\_num =} \FunctionTok{as.numeric}\NormalTok{(}\FunctionTok{gsub}\NormalTok{(}\StringTok{"[$,]"}\NormalTok{, }\StringTok{""}\NormalTok{, price))) }\SpecialCharTok{\%\textgreater{}\%}
+  \FunctionTok{filter}\NormalTok{(}\SpecialCharTok{!}\FunctionTok{is.na}\NormalTok{(price\_num), price\_num }\SpecialCharTok{\textgreater{}} \DecValTok{0}\NormalTok{, price\_num }\SpecialCharTok{\textless{}} \DecValTok{2000}\NormalTok{)}
+
+\CommentTok{\# Calcular cuartiles para crear categorías balanceadas}
+\NormalTok{q }\OtherTok{\textless{}{-}} \FunctionTok{quantile}\NormalTok{(df\_limpio}\SpecialCharTok{$}\NormalTok{price\_num, }\AttributeTok{probs =} \FunctionTok{c}\NormalTok{(}\FloatTok{0.25}\NormalTok{, }\FloatTok{0.50}\NormalTok{, }\FloatTok{0.75}\NormalTok{))}
+
+\CommentTok{\# Crear variable categórica y discretizar predictoras para Naive Bayes}
+\NormalTok{datos }\OtherTok{\textless{}{-}}\NormalTok{ df\_limpio }\SpecialCharTok{\%\textgreater{}\%}
+  \FunctionTok{mutate}\NormalTok{(}
+    \AttributeTok{price\_cat =} \FunctionTok{case\_when}\NormalTok{(}
+\NormalTok{      price\_num }\SpecialCharTok{\textless{}=}\NormalTok{ q[}\DecValTok{1}\NormalTok{]                    }\SpecialCharTok{\textasciitilde{}} \StringTok{"Bajo"}\NormalTok{,}
+\NormalTok{      price\_num }\SpecialCharTok{\textgreater{}}\NormalTok{ q[}\DecValTok{1}\NormalTok{] }\SpecialCharTok{\&}\NormalTok{ price\_num }\SpecialCharTok{\textless{}=}\NormalTok{ q[}\DecValTok{2}\NormalTok{] }\SpecialCharTok{\textasciitilde{}} \StringTok{"Medio{-}Bajo"}\NormalTok{,}
+\NormalTok{      price\_num }\SpecialCharTok{\textgreater{}}\NormalTok{ q[}\DecValTok{2}\NormalTok{] }\SpecialCharTok{\&}\NormalTok{ price\_num }\SpecialCharTok{\textless{}=}\NormalTok{ q[}\DecValTok{3}\NormalTok{] }\SpecialCharTok{\textasciitilde{}} \StringTok{"Medio{-}Alto"}\NormalTok{,}
+\NormalTok{      price\_num }\SpecialCharTok{\textgreater{}}\NormalTok{ q[}\DecValTok{3}\NormalTok{]                     }\SpecialCharTok{\textasciitilde{}} \StringTok{"Alto"}
+\NormalTok{    ),}
+    \AttributeTok{price\_cat =} \FunctionTok{factor}\NormalTok{(price\_cat, }\AttributeTok{levels =} \FunctionTok{c}\NormalTok{(}\StringTok{"Bajo"}\NormalTok{, }\StringTok{"Medio{-}Bajo"}\NormalTok{, }\StringTok{"Medio{-}Alto"}\NormalTok{, }\StringTok{"Alto"}\NormalTok{)),}
+    
+    \CommentTok{\# Asegurar tipos correctos y discretizar}
+    \AttributeTok{accommodates =} \FunctionTok{as.numeric}\NormalTok{(accommodates),}
+    \AttributeTok{bathrooms    =} \FunctionTok{as.numeric}\NormalTok{(bathrooms),}
+    \AttributeTok{bedrooms     =} \FunctionTok{as.numeric}\NormalTok{(bedrooms),}
+    \AttributeTok{beds         =} \FunctionTok{as.numeric}\NormalTok{(beds),}
+    \AttributeTok{minimum\_nights =} \FunctionTok{as.numeric}\NormalTok{(minimum\_nights),}
+    \AttributeTok{room\_type    =} \FunctionTok{as.factor}\NormalTok{(room\_type),}
+    
+    \AttributeTok{accommodates\_cat =} \FunctionTok{cut}\NormalTok{(accommodates, }\AttributeTok{breaks =} \FunctionTok{c}\NormalTok{(}\DecValTok{0}\NormalTok{, }\DecValTok{2}\NormalTok{, }\DecValTok{4}\NormalTok{, }\DecValTok{6}\NormalTok{, }\ConstantTok{Inf}\NormalTok{), }\AttributeTok{labels =} \FunctionTok{c}\NormalTok{(}\StringTok{"1{-}2"}\NormalTok{, }\StringTok{"3{-}4"}\NormalTok{, }\StringTok{"5{-}6"}\NormalTok{, }\StringTok{"7+"}\NormalTok{), }\AttributeTok{right =} \ConstantTok{TRUE}\NormalTok{),}
+    \AttributeTok{bedrooms\_cat     =} \FunctionTok{cut}\NormalTok{(}\FunctionTok{replace\_na}\NormalTok{(bedrooms, }\DecValTok{0}\NormalTok{), }\AttributeTok{breaks =} \FunctionTok{c}\NormalTok{(}\SpecialCharTok{{-}}\ConstantTok{Inf}\NormalTok{, }\DecValTok{0}\NormalTok{, }\DecValTok{1}\NormalTok{, }\DecValTok{2}\NormalTok{, }\DecValTok{3}\NormalTok{, }\ConstantTok{Inf}\NormalTok{), }\AttributeTok{labels =} \FunctionTok{c}\NormalTok{(}\StringTok{"0"}\NormalTok{, }\StringTok{"1"}\NormalTok{, }\StringTok{"2"}\NormalTok{, }\StringTok{"3"}\NormalTok{, }\StringTok{"4+"}\NormalTok{)),}
+    \AttributeTok{beds\_cat         =} \FunctionTok{cut}\NormalTok{(}\FunctionTok{replace\_na}\NormalTok{(beds, }\DecValTok{1}\NormalTok{), }\AttributeTok{breaks =} \FunctionTok{c}\NormalTok{(}\SpecialCharTok{{-}}\ConstantTok{Inf}\NormalTok{, }\DecValTok{1}\NormalTok{, }\DecValTok{2}\NormalTok{, }\DecValTok{3}\NormalTok{, }\ConstantTok{Inf}\NormalTok{), }\AttributeTok{labels =} \FunctionTok{c}\NormalTok{(}\StringTok{"1"}\NormalTok{, }\StringTok{"2"}\NormalTok{, }\StringTok{"3"}\NormalTok{, }\StringTok{"4+"}\NormalTok{)),}
+    \AttributeTok{bathrooms\_cat    =} \FunctionTok{cut}\NormalTok{(}\FunctionTok{replace\_na}\NormalTok{(bathrooms, }\DecValTok{1}\NormalTok{), }\AttributeTok{breaks =} \FunctionTok{c}\NormalTok{(}\SpecialCharTok{{-}}\ConstantTok{Inf}\NormalTok{, }\DecValTok{1}\NormalTok{, }\FloatTok{1.5}\NormalTok{, }\DecValTok{2}\NormalTok{, }\ConstantTok{Inf}\NormalTok{), }\AttributeTok{labels =} \FunctionTok{c}\NormalTok{(}\StringTok{"1"}\NormalTok{, }\StringTok{"1.5"}\NormalTok{, }\StringTok{"2"}\NormalTok{, }\StringTok{"2+"}\NormalTok{)),}
+    \AttributeTok{min\_nights\_cat   =} \FunctionTok{cut}\NormalTok{(minimum\_nights, }\AttributeTok{breaks =} \FunctionTok{c}\NormalTok{(}\DecValTok{0}\NormalTok{, }\DecValTok{1}\NormalTok{, }\DecValTok{3}\NormalTok{, }\DecValTok{7}\NormalTok{, }\ConstantTok{Inf}\NormalTok{), }\AttributeTok{labels =} \FunctionTok{c}\NormalTok{(}\StringTok{"1"}\NormalTok{, }\StringTok{"2{-}3"}\NormalTok{, }\StringTok{"4{-}7"}\NormalTok{, }\StringTok{"8+"}\NormalTok{), }\AttributeTok{right =} \ConstantTok{TRUE}\NormalTok{)}
+\NormalTok{  ) }\SpecialCharTok{\%\textgreater{}\%}
+  \FunctionTok{select}\NormalTok{(}
+\NormalTok{    price\_num, price\_cat, room\_type, accommodates\_cat,}
+\NormalTok{    bathrooms\_cat, bedrooms\_cat, beds\_cat,}
+\NormalTok{    min\_nights\_cat}
+\NormalTok{  ) }\SpecialCharTok{\%\textgreater{}\%}
+  \FunctionTok{drop\_na}\NormalTok{()}
+\end{Highlighting}
+\end{Shaded}
+
+Para implementar el algoritmo de Naive Bayes de manera efectiva,
+preprocesamos los datos transformando las variables numéricas en
+categorías o rangos. Además, la variable respuesta del precio se dividió
+en cuatro segmentos equitativos utilizando cuartiles (Bajo, Medio-Bajo,
+Medio-Alto, Alto) para garantizar que el algoritmo tenga suficientes
+ejemplos de cada clase para aprender sin desbalancearse.
+
+\begin{center}\rule{0.5\linewidth}{0.5pt}\end{center}
+
+\section{División de Entrenamiento y
+Prueba}\label{divisiuxf3n-de-entrenamiento-y-prueba}
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\FunctionTok{set.seed}\NormalTok{(}\DecValTok{123}\NormalTok{)}
+
+\CommentTok{\# Índices de entrenamiento: 70\%}
+\NormalTok{train\_index }\OtherTok{\textless{}{-}} \FunctionTok{createDataPartition}\NormalTok{(datos}\SpecialCharTok{$}\NormalTok{price\_cat, }\AttributeTok{p =} \FloatTok{0.70}\NormalTok{, }\AttributeTok{list =} \ConstantTok{FALSE}\NormalTok{)}
+
+\NormalTok{train\_data }\OtherTok{\textless{}{-}}\NormalTok{ datos[train\_index, ]}
+\NormalTok{test\_data  }\OtherTok{\textless{}{-}}\NormalTok{ datos[}\SpecialCharTok{{-}}\NormalTok{train\_index, ]}
+
+\FunctionTok{cat}\NormalTok{(}\StringTok{"Tamaño del conjunto de entrenamiento:"}\NormalTok{, }\FunctionTok{nrow}\NormalTok{(train\_data), }\StringTok{"}\SpecialCharTok{\textbackslash{}n}\StringTok{"}\NormalTok{)}
+\end{Highlighting}
+\end{Shaded}
+
+\begin{verbatim}
+## Tamaño del conjunto de entrenamiento: 51920
+\end{verbatim}
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\FunctionTok{cat}\NormalTok{(}\StringTok{"Tamaño del conjunto de prueba:       "}\NormalTok{, }\FunctionTok{nrow}\NormalTok{(test\_data), }\StringTok{"}\SpecialCharTok{\textbackslash{}n}\StringTok{"}\NormalTok{)}
+\end{Highlighting}
+\end{Shaded}
+
+\begin{verbatim}
+## Tamaño del conjunto de prueba:        22249
+\end{verbatim}
+
+Mantenemos la partición del 70\% para entrenamiento y 30\% para prueba
+utilizando la misma semilla (123) de los laboratorios anteriores. Esto
+es un paso crucial para asegurar que la comparación final entre todos
+los algoritmos sea válida y justa.
+
+\begin{center}\rule{0.5\linewidth}{0.5pt}\end{center}
+
+\section{Actividades 1 y 2: Entrenamiento y Evaluación Numérica
+(Regresión)}\label{actividades-1-y-2-entrenamiento-y-evaluaciuxf3n-numuxe9rica-regresiuxf3n}
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\CommentTok{\# Entrenamos Naive Bayes con corrección de Laplace para evitar probabilidades cero}
+\NormalTok{modelo\_nb }\OtherTok{\textless{}{-}} \FunctionTok{naiveBayes}\NormalTok{(}
+\NormalTok{  price\_cat }\SpecialCharTok{\textasciitilde{}}\NormalTok{ room\_type }\SpecialCharTok{+}\NormalTok{ accommodates\_cat }\SpecialCharTok{+}\NormalTok{ bathrooms\_cat }\SpecialCharTok{+}\NormalTok{ bedrooms\_cat }\SpecialCharTok{+}\NormalTok{ beds\_cat }\SpecialCharTok{+}\NormalTok{ min\_nights\_cat,}
+  \AttributeTok{data   =}\NormalTok{ train\_data,}
+  \AttributeTok{laplace =} \DecValTok{1} 
+\NormalTok{)}
+
+\CommentTok{\# 1. Calculamos el valor representativo promedio de cada categoría}
+\NormalTok{medias\_precio }\OtherTok{\textless{}{-}}\NormalTok{ train\_data }\SpecialCharTok{\%\textgreater{}\%}
+  \FunctionTok{group\_by}\NormalTok{(price\_cat) }\SpecialCharTok{\%\textgreater{}\%}
+  \FunctionTok{summarise}\NormalTok{(}\AttributeTok{precio\_promedio =} \FunctionTok{mean}\NormalTok{(price\_num, }\AttributeTok{na.rm =} \ConstantTok{TRUE}\NormalTok{))}
+
+\CommentTok{\# 2. Extraemos las probabilidades de cada categoría para el conjunto de prueba}
+\NormalTok{pred\_probabilidades }\OtherTok{\textless{}{-}} \FunctionTok{predict}\NormalTok{(modelo\_nb, }\AttributeTok{newdata =}\NormalTok{ test\_data, }\AttributeTok{type =} \StringTok{"raw"}\NormalTok{)}
+
+\CommentTok{\# 3. Calculamos el "Precio Predicho" numérico (Valor Esperado)}
+\NormalTok{precio\_predicho\_nb }\OtherTok{\textless{}{-}}\NormalTok{ (pred\_probabilidades[, }\StringTok{"Bajo"}\NormalTok{] }\SpecialCharTok{*}\NormalTok{ medias\_precio}\SpecialCharTok{$}\NormalTok{precio\_promedio[}\DecValTok{1}\NormalTok{]) }\SpecialCharTok{+}
+\NormalTok{                      (pred\_probabilidades[, }\StringTok{"Medio{-}Bajo"}\NormalTok{] }\SpecialCharTok{*}\NormalTok{ medias\_precio}\SpecialCharTok{$}\NormalTok{precio\_promedio[}\DecValTok{2}\NormalTok{]) }\SpecialCharTok{+}
+\NormalTok{                      (pred\_probabilidades[, }\StringTok{"Medio{-}Alto"}\NormalTok{] }\SpecialCharTok{*}\NormalTok{ medias\_precio}\SpecialCharTok{$}\NormalTok{precio\_promedio[}\DecValTok{3}\NormalTok{]) }\SpecialCharTok{+}
+\NormalTok{                      (pred\_probabilidades[, }\StringTok{"Alto"}\NormalTok{] }\SpecialCharTok{*}\NormalTok{ medias\_precio}\SpecialCharTok{$}\NormalTok{precio\_promedio[}\DecValTok{4}\NormalTok{])}
+
+\CommentTok{\# 4. Evaluamos el error de esta predicción continua}
+\NormalTok{rmse\_nb\_reg }\OtherTok{\textless{}{-}} \FunctionTok{sqrt}\NormalTok{(}\FunctionTok{mean}\NormalTok{((test\_data}\SpecialCharTok{$}\NormalTok{price\_num }\SpecialCharTok{{-}}\NormalTok{ precio\_predicho\_nb)}\SpecialCharTok{\^{}}\DecValTok{2}\NormalTok{, }\AttributeTok{na.rm =} \ConstantTok{TRUE}\NormalTok{))}
+\NormalTok{mae\_nb\_reg }\OtherTok{\textless{}{-}} \FunctionTok{mean}\NormalTok{(}\FunctionTok{abs}\NormalTok{(test\_data}\SpecialCharTok{$}\NormalTok{price\_num }\SpecialCharTok{{-}}\NormalTok{ precio\_predicho\_nb), }\AttributeTok{na.rm =} \ConstantTok{TRUE}\NormalTok{)}
+
+\FunctionTok{cat}\NormalTok{(}\StringTok{"Métricas del seudo{-}modelo de Regresión Naive Bayes:}\SpecialCharTok{\textbackslash{}n}\StringTok{"}\NormalTok{)}
+\end{Highlighting}
+\end{Shaded}
+
+\begin{verbatim}
+## Métricas del seudo-modelo de Regresión Naive Bayes:
+\end{verbatim}
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\FunctionTok{cat}\NormalTok{(}\StringTok{"RMSE:"}\NormalTok{, }\FunctionTok{round}\NormalTok{(rmse\_nb\_reg, }\DecValTok{2}\NormalTok{), }\StringTok{"}\SpecialCharTok{\textbackslash{}n}\StringTok{"}\NormalTok{)}
+\end{Highlighting}
+\end{Shaded}
+
+\begin{verbatim}
+## RMSE: 220.28
+\end{verbatim}
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\FunctionTok{cat}\NormalTok{(}\StringTok{"MAE:"}\NormalTok{, }\FunctionTok{round}\NormalTok{(mae\_nb\_reg, }\DecValTok{2}\NormalTok{), }\StringTok{"}\SpecialCharTok{\textbackslash{}n}\StringTok{"}\NormalTok{)}
+\end{Highlighting}
+\end{Shaded}
+
+\begin{verbatim}
+## MAE: 137.72
+\end{verbatim}
+
+El algoritmo de Naive Bayes es de naturaleza probabilística y no calcula
+regresiones continuas directas. Para evaluar su capacidad predictiva
+sobre el precio exacto (Actividades 1 y 2), multiplicamos la
+probabilidad que el algoritmo asignó a cada categoría por el precio
+promedio de dicha categoría, obteniendo un valor esperado continuo. Los
+resultados muestran un Error Cuadrático Medio (RMSE) bastante elevado,
+lo que indica que el algoritmo falla por un margen considerable al
+intentar adivinar la tarifa exacta por noche. Esto ocurre porque Naive
+Bayes asume que todas las características de la casa son independientes
+entre sí, lo cual no aplica en la realidad inmobiliaria donde el tamaño
+y las camas están directamente relacionados.
+
+\begin{center}\rule{0.5\linewidth}{0.5pt}\end{center}
+
+\section{Actividad 3: Comparación Histórica de Modelos de
+Regresión}\label{actividad-3-comparaciuxf3n-histuxf3rica-de-modelos-de-regresiuxf3n}
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\CommentTok{\# Valores aproximados obtenidos en laboratorios anteriores bajo los mismos datos}
+\NormalTok{resultados\_regresion }\OtherTok{\textless{}{-}} \FunctionTok{data.frame}\NormalTok{(}
+  \AttributeTok{Algoritmo =} \FunctionTok{c}\NormalTok{(}\StringTok{"Regresión Lineal Múltiple"}\NormalTok{, }\StringTok{"Árbol de Decisión (Prof. 4)"}\NormalTok{, }\StringTok{"Naive Bayes (Probabilístico)"}\NormalTok{),}
+  \AttributeTok{RMSE\_Aproximado =} \FunctionTok{c}\NormalTok{(}\StringTok{"Muy Alto (MSE 13M)"}\NormalTok{, }\StringTok{"250.45"}\NormalTok{, }\FunctionTok{round}\NormalTok{(rmse\_nb\_reg, }\DecValTok{2}\NormalTok{))}
+\NormalTok{)}
+
+\FunctionTok{kable}\NormalTok{(resultados\_regresion, }\AttributeTok{caption =} \StringTok{"Comparación Histórica de Modelos Numéricos"}\NormalTok{) }\SpecialCharTok{\%\textgreater{}\%}
+  \FunctionTok{kable\_styling}\NormalTok{(}\AttributeTok{bootstrap\_options =} \FunctionTok{c}\NormalTok{(}\StringTok{"striped"}\NormalTok{, }\StringTok{"hover"}\NormalTok{), }\AttributeTok{full\_width =} \ConstantTok{FALSE}\NormalTok{)}
+\end{Highlighting}
+\end{Shaded}
+
+\begin{longtable}[t]{ll}
+\caption{\label{tab:comparacion_regresion}Comparación Histórica de Modelos Numéricos}\\
+\toprule
+Algoritmo & RMSE\_Aproximado\\
+\midrule
+Regresión Lineal Múltiple & Muy Alto (MSE 13M)\\
+Árbol de Decisión (Prof. 4) & 250.45\\
+Naive Bayes (Probabilístico) & 220.28\\
+\bottomrule
+\end{longtable}
+
+Al contrastar Naive Bayes con los modelos de las semanas previas, el
+Árbol de Decisión de profundidad 4 se mantiene como la herramienta más
+eficiente para predecir el precio exacto. La Regresión Lineal forzaba
+relaciones rectas inexistentes, y Naive Bayes falla por asumir
+independencia total. El Árbol de Regresión, al crear reglas específicas
+(ej. ``Casa entera con más de 3 camas''), logra ajustarse mejor a la
+variabilidad del mercado.
+
+\begin{center}\rule{0.5\linewidth}{0.5pt}\end{center}
+
+\section{Actividad 4: Modelo de Clasificación
+(Categorías)}\label{actividad-4-modelo-de-clasificaciuxf3n-categoruxedas}
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\CommentTok{\# Extraemos las probabilidades a priori del modelo ya entrenado}
+\NormalTok{apriori\_df }\OtherTok{\textless{}{-}} \FunctionTok{data.frame}\NormalTok{(}
+  \AttributeTok{Categoria =} \FunctionTok{names}\NormalTok{(modelo\_nb}\SpecialCharTok{$}\NormalTok{apriori),}
+  \AttributeTok{Probabilidad =} \FunctionTok{as.numeric}\NormalTok{(}\FunctionTok{prop.table}\NormalTok{(modelo\_nb}\SpecialCharTok{$}\NormalTok{apriori))}
+\NormalTok{)}
+
+\FunctionTok{ggplot}\NormalTok{(apriori\_df, }\FunctionTok{aes}\NormalTok{(}\AttributeTok{x =}\NormalTok{ Categoria, }\AttributeTok{y =}\NormalTok{ Probabilidad, }\AttributeTok{fill =}\NormalTok{ Categoria)) }\SpecialCharTok{+}
+  \FunctionTok{geom\_col}\NormalTok{(}\AttributeTok{show.legend =} \ConstantTok{FALSE}\NormalTok{) }\SpecialCharTok{+}
+  \FunctionTok{geom\_text}\NormalTok{(}\FunctionTok{aes}\NormalTok{(}\AttributeTok{label =}\NormalTok{ scales}\SpecialCharTok{::}\FunctionTok{percent}\NormalTok{(Probabilidad, }\AttributeTok{accuracy =} \FloatTok{0.1}\NormalTok{)), }\AttributeTok{vjust =} \SpecialCharTok{{-}}\FloatTok{0.5}\NormalTok{, }\AttributeTok{size =} \DecValTok{4}\NormalTok{) }\SpecialCharTok{+}
+  \FunctionTok{scale\_fill\_brewer}\NormalTok{(}\AttributeTok{palette =} \StringTok{"Blues"}\NormalTok{) }\SpecialCharTok{+}
+  \FunctionTok{labs}\NormalTok{(}\AttributeTok{title =} \StringTok{"Probabilidades A Priori por Categoría de Precio"}\NormalTok{,}
+       \AttributeTok{x =} \StringTok{"Categoría de Precio"}\NormalTok{, }\AttributeTok{y =} \StringTok{"Probabilidad"}\NormalTok{) }\SpecialCharTok{+}
+  \FunctionTok{theme\_minimal}\NormalTok{(}\AttributeTok{base\_size =} \DecValTok{13}\NormalTok{) }\SpecialCharTok{+}
+  \FunctionTok{ylim}\NormalTok{(}\DecValTok{0}\NormalTok{, }\FloatTok{0.35}\NormalTok{)}
+\end{Highlighting}
+\end{Shaded}
+
+\begin{center}\includegraphics{pasaporte_5_files/figure-latex/apriori-1} \end{center}
+
+Al cambiar el enfoque hacia la clasificación, el objetivo es predecir a
+qué rango de mercado pertenece una propiedad. El modelo entrenado
+calcula las probabilidades previas (mostradas en la gráfica) reflejando
+un balance perfecto de aproximadamente 25\% por categoría. Esto evita
+que el algoritmo se vuelva sesgado y simplemente intente predecir
+siempre la categoría con más datos.
+
+\begin{center}\rule{0.5\linewidth}{0.5pt}\end{center}
+
+\section{Actividades 5 y 6: Predicción, Eficiencia y Matriz de
+Confusión}\label{actividades-5-y-6-predicciuxf3n-eficiencia-y-matriz-de-confusiuxf3n}
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\CommentTok{\# Predicciones de clase sobre datos no vistos}
+\NormalTok{pred\_clase }\OtherTok{\textless{}{-}} \FunctionTok{predict}\NormalTok{(modelo\_nb, }\AttributeTok{newdata =}\NormalTok{ test\_data, }\AttributeTok{type =} \StringTok{"class"}\NormalTok{)}
+
+\CommentTok{\# Generación de la matriz de confusión}
+\NormalTok{conf\_matrix }\OtherTok{\textless{}{-}} \FunctionTok{confusionMatrix}\NormalTok{(pred\_clase, test\_data}\SpecialCharTok{$}\NormalTok{price\_cat)}
+
+\CommentTok{\# Convertir a data frame para visualización gráfica}
+\NormalTok{conf\_df }\OtherTok{\textless{}{-}} \FunctionTok{as.data.frame}\NormalTok{(conf\_matrix}\SpecialCharTok{$}\NormalTok{table)}
+\FunctionTok{colnames}\NormalTok{(conf\_df) }\OtherTok{\textless{}{-}} \FunctionTok{c}\NormalTok{(}\StringTok{"Predicho"}\NormalTok{, }\StringTok{"Real"}\NormalTok{, }\StringTok{"Frecuencia"}\NormalTok{)}
+
+\FunctionTok{ggplot}\NormalTok{(conf\_df, }\FunctionTok{aes}\NormalTok{(}\AttributeTok{x =}\NormalTok{ Real, }\AttributeTok{y =}\NormalTok{ Predicho, }\AttributeTok{fill =}\NormalTok{ Frecuencia)) }\SpecialCharTok{+}
+  \FunctionTok{geom\_tile}\NormalTok{(}\AttributeTok{color =} \StringTok{"white"}\NormalTok{) }\SpecialCharTok{+}
+  \FunctionTok{geom\_text}\NormalTok{(}\FunctionTok{aes}\NormalTok{(}\AttributeTok{label =}\NormalTok{ Frecuencia), }\AttributeTok{size =} \DecValTok{5}\NormalTok{, }\AttributeTok{fontface =} \StringTok{"bold"}\NormalTok{) }\SpecialCharTok{+}
+  \FunctionTok{scale\_fill\_gradient}\NormalTok{(}\AttributeTok{low =} \StringTok{"\#E3F2FD"}\NormalTok{, }\AttributeTok{high =} \StringTok{"\#1565C0"}\NormalTok{) }\SpecialCharTok{+}
+  \FunctionTok{labs}\NormalTok{(}\AttributeTok{title =} \StringTok{"Matriz de Confusión {-} Naive Bayes"}\NormalTok{,}
+       \AttributeTok{subtitle =} \FunctionTok{paste}\NormalTok{(}\StringTok{"Exactitud Global:"}\NormalTok{, }\FunctionTok{round}\NormalTok{(conf\_matrix}\SpecialCharTok{$}\NormalTok{overall[}\StringTok{"Accuracy"}\NormalTok{] }\SpecialCharTok{*} \DecValTok{100}\NormalTok{, }\DecValTok{1}\NormalTok{), }\StringTok{"\%"}\NormalTok{),}
+       \AttributeTok{x =} \StringTok{"Categoría Real"}\NormalTok{, }\AttributeTok{y =} \StringTok{"Categoría Predicha"}\NormalTok{, }\AttributeTok{fill =} \StringTok{"Frecuencia"}\NormalTok{) }\SpecialCharTok{+}
+  \FunctionTok{theme\_minimal}\NormalTok{(}\AttributeTok{base\_size =} \DecValTok{13}\NormalTok{)}
+\end{Highlighting}
+\end{Shaded}
+
+\begin{center}\includegraphics{pasaporte_5_files/figure-latex/confusion-1} \end{center}
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\CommentTok{\# Métricas detalladas por clase}
+\NormalTok{metricas\_clase }\OtherTok{\textless{}{-}} \FunctionTok{as.data.frame}\NormalTok{(conf\_matrix}\SpecialCharTok{$}\NormalTok{byClass)}
+\NormalTok{metricas\_clase}\SpecialCharTok{$}\NormalTok{Clase }\OtherTok{\textless{}{-}} \FunctionTok{rownames}\NormalTok{(metricas\_clase)}
+
+\NormalTok{metricas\_clase }\SpecialCharTok{\%\textgreater{}\%}
+  \FunctionTok{select}\NormalTok{(Clase, Sensitivity, Specificity, }\StringTok{\textasciigrave{}}\AttributeTok{Pos Pred Value}\StringTok{\textasciigrave{}}\NormalTok{, F1) }\SpecialCharTok{\%\textgreater{}\%}
+  \FunctionTok{mutate}\NormalTok{(}\FunctionTok{across}\NormalTok{(}\FunctionTok{where}\NormalTok{(is.numeric), }\SpecialCharTok{\textasciitilde{}} \FunctionTok{round}\NormalTok{(.x, }\DecValTok{3}\NormalTok{))) }\SpecialCharTok{\%\textgreater{}\%}
+  \FunctionTok{kable}\NormalTok{(}\AttributeTok{col.names =} \FunctionTok{c}\NormalTok{(}\StringTok{"Clase"}\NormalTok{, }\StringTok{"Sensibilidad"}\NormalTok{, }\StringTok{"Especificidad"}\NormalTok{, }\StringTok{"Precisión (VPP)"}\NormalTok{, }\StringTok{"F1{-}Score"}\NormalTok{),}
+        \AttributeTok{caption =} \StringTok{"Métricas de Eficiencia por Categoría de Precio"}\NormalTok{) }\SpecialCharTok{\%\textgreater{}\%}
+  \FunctionTok{kable\_styling}\NormalTok{(}\AttributeTok{bootstrap\_options =} \FunctionTok{c}\NormalTok{(}\StringTok{"striped"}\NormalTok{, }\StringTok{"hover"}\NormalTok{), }\AttributeTok{full\_width =} \ConstantTok{FALSE}\NormalTok{)}
+\end{Highlighting}
+\end{Shaded}
+
+\begin{longtable}[t]{llrrrr}
+\caption{\label{tab:metricas_clase}Métricas de Eficiencia por Categoría de Precio}\\
+\toprule
+ & Clase & Sensibilidad & Especificidad & Precisión (VPP) & F1-Score\\
+\midrule
+Class: Bajo & Class: Bajo & 0.670 & 0.781 & 0.505 & 0.576\\
+Class: Medio-Bajo & Class: Medio-Bajo & 0.328 & 0.822 & 0.381 & 0.352\\
+Class: Medio-Alto & Class: Medio-Alto & 0.258 & 0.850 & 0.365 & 0.302\\
+Class: Alto & Class: Alto & 0.628 & 0.841 & 0.567 & 0.596\\
+\bottomrule
+\end{longtable}
+
+Al poner a prueba el modelo con datos nuevos, obtenemos una radiografía
+completa de sus fortalezas y debilidades a través de la matriz de
+confusión:
+
+\begin{itemize}
+\tightlist
+\item
+  \textbf{Dónde se equivocó menos (Efectividad):} El algoritmo tiene una
+  gran capacidad para identificar los extremos. Rara vez confunde una
+  propiedad económica (``Bajo'') con una propiedad premium (``Alto'').
+  La sensibilidad es más fuerte en estos polos porque sus
+  características estructurales son muy marcadas y distintas.
+\item
+  \textbf{Dónde se equivocó más (Confusión):} Los bloques centrales de
+  la matriz evidencian que el modelo tiene serios problemas para
+  diferenciar entre los rangos intermedios (``Medio-Bajo'' y
+  ``Medio-Alto''). Al basarnos en cuartiles, la diferencia de precio
+  entre estas propiedades puede ser de apenas un par de dólares, por lo
+  que sus características físicas (baños, camas) se solapan fuertemente.
+\item
+  \textbf{Importancia de los errores:} Para SmartStay, sugerir un precio
+  Medio-Bajo a una propiedad que realmente es Medio-Alta representa una
+  pérdida de ingresos moderada pero manejable. Sin embargo, los errores
+  graves de cotizar muy bajo una propiedad de lujo están siendo
+  controlados satisfactoriamente por el modelo. A pesar de su
+  simplicidad e independencia condicional, Naive Bayes supera el azar
+  estadístico, aunque para estrategias de alta precisión financiera
+  requerirá apoyo de otros métodos.
+\end{itemize}
+
+\end{document}
