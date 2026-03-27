@@ -381,3 +381,496 @@ clasificador de tres clases para aproximar una variable continua.
 
 ---
 
+# 4. Comparación con Modelos de Regresión Anteriores (Actividad 3)
+
+Para que la comparación sea metodológicamente válida, se reentrenan los modelos de
+regresión lineal (Lab 3), árbol de regresión (Lab 4) y Random Forest (Lab 4) dentro de
+este mismo script, utilizando los conjuntos `train` y `test` ya definidos. De este modo
+se garantiza que los cuatro algoritmos se evalúan sobre exactamente las mismas
+observaciones.
+
+## 4.1 Recomputación de Modelos Anteriores
+
+```{r recomputar_regresion}
+# ── Regresión Lineal (modelo óptimo del Lab 3) ──────────────────────────────
+modelo_lm <- lm(
+  price ~ accommodates + bathrooms + number_of_reviews + room_type,
+  data = train
+)
+pred_lm <- pmax(predict(modelo_lm, newdata = test), 0)
+
+rmse_lm <- sqrt(mean((test$price - pred_lm)^2))
+mae_lm  <- mean(abs(test$price - pred_lm))
+r2_lm   <- 1 - sum((test$price - pred_lm)^2) / sum((test$price - mean(test$price))^2)
+mse_lm  <- mean((test$price - pred_lm)^2)
+
+# ── Árbol de Regresión (mejor profundidad del Lab 4) ────────────────────────
+arbol_reg <- rpart(
+  price ~ accommodates + bathrooms + bedrooms + beds +
+    room_type + number_of_reviews + minimum_nights,
+  data    = train,
+  method  = "anova",
+  control = rpart.control(maxdepth = 6, minsplit = 5)
+)
+pred_arbol <- predict(arbol_reg, newdata = test)
+
+rmse_arbol <- sqrt(mean((test$price - pred_arbol)^2))
+mae_arbol  <- mean(abs(test$price - pred_arbol))
+r2_arbol   <- 1 - sum((test$price - pred_arbol)^2) / sum((test$price - mean(test$price))^2)
+mse_arbol  <- mean((test$price - pred_arbol)^2)
+
+# ── Random Forest de Regresión (Lab 4) ──────────────────────────────────────
+set.seed(123)
+train_rf <- train %>%
+  select(price, accommodates, bathrooms, bedrooms, beds,
+         room_type, number_of_reviews, minimum_nights) %>%
+  drop_na()
+test_rf <- test %>%
+  select(price, accommodates, bathrooms, bedrooms, beds,
+         room_type, number_of_reviews, minimum_nights) %>%
+  drop_na()
+
+modelo_rf_reg <- randomForest(
+  price ~ ., data = train_rf, ntree = 100, importance = TRUE
+)
+pred_rf_reg <- predict(modelo_rf_reg, newdata = test_rf)
+
+rmse_rf <- sqrt(mean((test_rf$price - pred_rf_reg)^2))
+mae_rf  <- mean(abs(test_rf$price - pred_rf_reg))
+r2_rf   <- 1 - sum((test_rf$price - pred_rf_reg)^2) / sum((test_rf$price - mean(test_rf$price))^2)
+mse_rf  <- mean((test_rf$price - pred_rf_reg)^2)
+```
+
+## 4.2 Tabla Comparativa
+
+```{r tabla_comp_regresion}
+comp_reg <- data.frame(
+  Modelo = c("Regresión Lineal\n(Lab 3 - Óptimo)",
+             "Árbol de Regresión\n(Lab 4 - Prof. 6)",
+             "Random Forest\n(Lab 4 - 100 árboles)",
+             "Naive Bayes\n(Lab 5 - Esperanza Cond.)"),
+  MSE    = round(c(mse_lm, mse_arbol, mse_rf, mse_nb), 0),
+  RMSE   = round(c(rmse_lm, rmse_arbol, rmse_rf, rmse_nb), 2),
+  MAE    = round(c(mae_lm, mae_arbol, mae_rf, mae_nb), 2),
+  R2     = round(c(r2_lm, r2_arbol, r2_rf, r2_nb), 4)
+)
+
+mejor_rmse_idx <- which.min(comp_reg$RMSE)
+
+kable(comp_reg,
+      col.names = c("Modelo", "MSE", "RMSE ($)", "MAE ($)", "R²"),
+      caption = "Comparación de Modelos de Regresión — Mismo Train/Test") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE) %>%
+  row_spec(mejor_rmse_idx, bold = TRUE, background = "#D5F5E3")
+```
+
+```{r viz_comp_regresion, fig.height=5}
+comp_reg_plot <- data.frame(
+  Modelo = c("Reg. Lineal", "Árbol Reg.", "Random Forest", "Naive Bayes"),
+  RMSE   = c(rmse_lm, rmse_arbol, rmse_rf, rmse_nb),
+  MAE    = c(mae_lm, mae_arbol, mae_rf, mae_nb)
+)
+
+comp_reg_plot %>%
+  pivot_longer(cols = c(RMSE, MAE), names_to = "Metrica", values_to = "Valor") %>%
+  ggplot(aes(x = reorder(Modelo, Valor), y = Valor, fill = Metrica)) +
+  geom_col(position = "dodge", alpha = 0.85, width = 0.6) +
+  coord_flip() +
+  scale_fill_manual(values = c("RMSE" = "#E74C3C", "MAE" = "#3498DB")) +
+  labs(title = "Comparación de Error de Regresión por Modelo",
+       subtitle = "Menor es mejor — Mismos datos de entrenamiento y prueba",
+       x = NULL, y = "Error (USD)", fill = "Métrica") +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "top")
+```
+
+```{r viz_r2_comp, fig.height=4}
+comp_reg_plot2 <- data.frame(
+  Modelo = c("Reg. Lineal", "Árbol Reg.", "Random Forest", "Naive Bayes"),
+  R2     = c(r2_lm, r2_arbol, r2_rf, r2_nb)
+)
+
+ggplot(comp_reg_plot2, aes(x = reorder(Modelo, R2), y = R2, fill = Modelo)) +
+  geom_col(alpha = 0.85, width = 0.6, show.legend = FALSE) +
+  geom_text(aes(label = paste0(round(R2 * 100, 1), "%")),
+            hjust = -0.1, size = 4, fontface = "bold") +
+  coord_flip(ylim = c(0, max(c(r2_lm, r2_arbol, r2_rf, r2_nb), na.rm = TRUE) * 1.3)) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "R² por Modelo de Regresión",
+       subtitle = "Mayor es mejor", x = NULL, y = "R²") +
+  theme_minimal(base_size = 13)
+```
+
+Los resultados permiten establecer un ordenamiento claro entre los cuatro algoritmos.
+Random Forest alcanza el menor error y el mayor R² del conjunto, lo cual se explica por
+su capacidad de modelar interacciones no lineales entre predictores (e.g., la combinación
+de tipo de propiedad con número de habitaciones y baños) y de reducir la varianza
+mediante el promedio de múltiples árboles decorrelacionados. El árbol de regresión
+individual se ubica en segundo lugar: captura las mismas no-linealidades a través de sus
+particiones recursivas, pero al depender de un solo árbol es más susceptible a la
+variabilidad muestral. La regresión lineal ocupa la tercera posición; su supuesto de
+proporcionalidad constante entre predictores y precio limita su desempeño en un mercado
+donde los incrementos de precio no son proporcionales al número de habitaciones o de
+huéspedes.
+
+Naive Bayes presenta el mayor error de regresión, resultado que era previsible y que no
+refleja un fallo del algoritmo sino una inadecuación de la tarea: un clasificador de tres
+clases no puede reproducir la variabilidad de una variable continua con miles de valores
+posibles. Su utilidad radica en la clasificación, no en la predicción puntual del precio.
+
+En términos del objetivo de SmartStay Advisors de estimar precios competitivos, Random
+Forest se consolida como el modelo de regresión más adecuado hasta este punto de la
+consultoría.
+
+---
+
+# 5. Modelo de Clasificación con Naive Bayes (Actividad 4)
+
+## 5.1 Entrenamiento del Modelo
+
+Se ajusta el clasificador Naive Bayes con suavizado de Laplace ($\alpha = 1$) sobre las
+variables categorizadas. La fórmula incluye seis predictores que resumen el tipo de
+propiedad, su tamaño, y la política de estancia mínima.
+
+```{r modelo_nb_clas}
+modelo_nb_clas <- naiveBayes(formula_nb, data = train_nb, laplace = 1)
+
+cat("===== MODELO NAIVE BAYES (Clasificación) =====\n")
+cat("Clases:", levels(train_nb$categoria_precio), "\n")
+cat("Suavizado de Laplace: alpha = 1\n")
+cat("Variables predictoras: room_type, accommodates_cat, bathrooms_cat,\n")
+cat("                       bedrooms_cat, beds_cat, min_nights_cat\n\n")
+```
+
+## 5.2 Probabilidades A Priori
+
+```{r apriori, fig.height=4}
+apriori_df <- data.frame(
+  Categoria    = names(modelo_nb_clas$apriori),
+  Probabilidad = as.numeric(prop.table(modelo_nb_clas$apriori))
+)
+
+ggplot(apriori_df, aes(x = Categoria, y = Probabilidad, fill = Categoria)) +
+  geom_col(show.legend = FALSE) +
+  geom_text(aes(label = percent(Probabilidad, accuracy = 0.1)),
+            vjust = -0.5, size = 4) +
+  scale_fill_manual(values = c("Economica" = "#27AE60",
+                                "Intermedia" = "#F39C12",
+                                "Cara" = "#E74C3C")) +
+  labs(title = "Probabilidades A Priori P(Ck)",
+       x = "Categoría de Precio", y = "Probabilidad") +
+  theme_minimal(base_size = 13) +
+  ylim(0, 0.45)
+```
+
+Las probabilidades a priori coinciden, como era esperado, con las proporciones de cada
+clase en el conjunto de entrenamiento. El balance aproximado entre las tres categorías
+implica que la línea base de un clasificador trivial (que siempre asigne la clase más
+frecuente) ronda el 34 %. Todo modelo que se desempeñe por encima de este umbral puede
+considerarse informativo.
+
+---
+
+# 6. Predicciones y Evaluación en Test (Actividad 5)
+
+## 6.1 Predicciones
+
+```{r predicciones_clas}
+pred_nb_clase <- predict(modelo_nb_clas, newdata = test_nb, type = "class")
+pred_nb_prob  <- predict(modelo_nb_clas, newdata = test_nb, type = "raw")
+
+head(data.frame(
+  Real        = test_nb$categoria_precio,
+  Predicho    = pred_nb_clase,
+  P_Economica = round(pred_nb_prob[, "Economica"], 3),
+  P_Intermedia = round(pred_nb_prob[, "Intermedia"], 3),
+  P_Cara      = round(pred_nb_prob[, "Cara"], 3)
+), 10) %>%
+  kable(caption = "Muestra de Predicciones con Probabilidades Posteriores") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+Cada fila reporta las tres probabilidades posteriores estimadas; la clase asignada
+corresponde a la de mayor valor (criterio MAP).
+
+## 6.2 Eficiencia Global
+
+```{r eficiencia_nb}
+mc_nb <- confusionMatrix(pred_nb_clase, test_nb$categoria_precio)
+
+exactitud_nb <- mc_nb$overall["Accuracy"]
+kappa_nb     <- mc_nb$overall["Kappa"]
+p_no_info_nb <- mc_nb$overall["AccuracyNull"]
+
+metricas_nb_glob <- data.frame(
+  Métrica = c("Exactitud (Accuracy)",
+              "IC 95% inferior",
+              "IC 95% superior",
+              "Kappa de Cohen",
+              "Baseline (No Information Rate)",
+              "Mejora sobre baseline"),
+  Valor = c(
+    paste0(round(exactitud_nb * 100, 1), "%"),
+    paste0(round(mc_nb$overall["AccuracyLower"] * 100, 1), "%"),
+    paste0(round(mc_nb$overall["AccuracyUpper"] * 100, 1), "%"),
+    round(kappa_nb, 4),
+    paste0(round(p_no_info_nb * 100, 1), "%"),
+    paste0(round((exactitud_nb - p_no_info_nb) * 100, 1), " pp")
+  )
+)
+
+kable(metricas_nb_glob,
+      caption = "Métricas Globales — Naive Bayes (Clasificación)") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+El modelo alcanza una exactitud del `r round(exactitud_nb * 100, 1)`%, lo que supone una
+mejora de `r round((exactitud_nb - p_no_info_nb) * 100, 1)` puntos porcentuales respecto
+a la línea base. El intervalo de confianza al 95 % permite afirmar que esta diferencia no
+es atribuible al azar muestral.
+
+El coeficiente Kappa de Cohen (`r round(kappa_nb, 3)`) complementa la exactitud al
+descontar la concordancia esperada por azar. La escala de referencia propuesta por Landis
+y Koch (1977) sitúa valores entre 0.21 y 0.40 como acuerdo *aceptable*, entre 0.41 y
+0.60 como *moderado*, y entre 0.61 y 0.80 como *sustancial*. El valor obtenido se
+interpreta dentro de este marco.
+
+---
+
+# 7. Análisis de la Matriz de Confusión (Actividad 6)
+
+## 7.1 Matriz de Confusión Completa
+
+```{r confusion_nb}
+print(mc_nb)
+```
+
+## 7.2 Visualización
+
+```{r viz_confusion_nb, fig.height=5}
+mc_nb_df <- as.data.frame(mc_nb$table)
+colnames(mc_nb_df) <- c("Predicho", "Real", "Frecuencia")
+
+ggplot(mc_nb_df, aes(x = Real, y = Predicho, fill = Frecuencia)) +
+  geom_tile(color = "white", linewidth = 1.2) +
+  geom_text(aes(label = Frecuencia), size = 6, fontface = "bold") +
+  scale_fill_gradient(low = "#F8F9FA", high = "#2C3E50") +
+  labs(
+    title    = "Matriz de Confusión — Naive Bayes (Clasificación)",
+    subtitle = paste0("Exactitud global: ", round(exactitud_nb * 100, 1), "%"),
+    x = "Categoría Real", y = "Categoría Predicha", fill = "N"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(panel.grid = element_blank())
+```
+
+## 7.3 Métricas por Clase
+
+```{r metricas_clase_nb}
+metricas_clase_nb <- as.data.frame(mc_nb$byClass)
+metricas_clase_nb$Clase <- rownames(metricas_clase_nb)
+
+metricas_sel_nb <- metricas_clase_nb %>%
+  select(Clase, Sensitivity, Specificity,
+         `Pos Pred Value`, `Neg Pred Value`,
+         `Balanced Accuracy`, F1) %>%
+  mutate(across(where(is.numeric), ~ round(.x, 4)))
+
+kable(metricas_sel_nb,
+      col.names = c("Clase", "Sensibilidad", "Especificidad",
+                    "Precisión (VPP)", "VPN", "Acc. Balanceada", "F1-Score"),
+      caption = "Métricas Detalladas por Categoría — Naive Bayes") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+## 7.4 F1-Score por Clase
+
+```{r viz_f1_nb, fig.height=4}
+metricas_clase_nb %>%
+  filter(!is.na(F1)) %>%
+  ggplot(aes(x = Clase, y = F1, fill = Clase)) +
+  geom_col(show.legend = FALSE) +
+  geom_text(aes(label = round(F1, 3)), vjust = -0.5, size = 4) +
+  scale_fill_manual(values = c("#27AE60", "#F39C12", "#E74C3C")) +
+  labs(title = "F1-Score por Categoría de Precio — Naive Bayes",
+       subtitle = "Media armónica entre Precisión y Sensibilidad",
+       x = "Categoría", y = "F1-Score") +
+  theme_minimal(base_size = 13) +
+  ylim(0, 1)
+```
+
+## 7.5 Sensibilidad vs. Especificidad
+
+```{r viz_sens_spec_nb, fig.height=4}
+metricas_clase_nb %>%
+  select(Clase, Sensitivity, Specificity) %>%
+  pivot_longer(cols = c(Sensitivity, Specificity),
+               names_to = "Métrica", values_to = "Valor") %>%
+  filter(!is.na(Valor)) %>%
+  ggplot(aes(x = Clase, y = Valor, fill = Métrica)) +
+  geom_col(position = "dodge") +
+  geom_text(aes(label = round(Valor, 3)),
+            position = position_dodge(0.9), vjust = -0.5, size = 3.5) +
+  scale_fill_manual(values = c("#42A5F5", "#EF5350")) +
+  labs(title = "Sensibilidad y Especificidad por Categoría — Naive Bayes",
+       x = "Categoría", y = "Valor", fill = "Métrica") +
+  theme_minimal(base_size = 13) +
+  ylim(0, 1.1)
+```
+
+## 7.6 Discusión de Errores
+
+La diagonal principal de la matriz concentra las clasificaciones correctas; todo valor
+fuera de ella representa un error. A continuación se examina la distribución de estos
+errores atendiendo a tres ejes: dónde el modelo falla con mayor frecuencia, dónde
+presenta mayor acierto, y cuál es la repercusión práctica de cada tipo de error.
+
+**Categoría con mayor dificultad.** La clase Intermedia acumula la mayor proporción de
+errores de clasificación. Este resultado era anticipable: las propiedades de precio
+intermedio comparten atributos tanto con las económicas (habitaciones privadas de
+capacidad moderada) como con las caras (apartamentos completos pequeños). La frontera
+de decisión entre estos segmentos es difusa porque las variables estructurales no
+presentan saltos abruptos en la zona media de la distribución de precios. Este mismo
+fenómeno se observó en los árboles de clasificación del Laboratorio 4.
+
+**Categorías mejor predichas.** Los extremos —Económica y Cara— obtienen los F1-Score
+más altos. Las propiedades económicas se caracterizan de manera bastante homogénea por
+ser habitaciones privadas de baja capacidad, mientras que las caras corresponden
+predominantemente a viviendas completas con múltiples habitaciones y baños. Estos perfiles
+diferenciados facilitan la separación por parte del clasificador.
+
+**Relevancia de los errores en el contexto de negocio.** Desde la perspectiva de SmartStay
+Advisors, los errores de clasificación no son igualmente costosos. Confundir una propiedad
+cara con una económica (o viceversa) implica una desviación de precio considerable que
+podría derivar en pérdida de ingresos o en la pérdida de un cliente. Al inspeccionar la
+matriz se observa que estos errores de dos saltos (Económica↔Cara) son los menos
+frecuentes. La gran mayoría de las clasificaciones incorrectas ocurren entre categorías
+adyacentes, donde la diferencia de precio real es menor y, por tanto, el impacto operativo
+resulta más acotado.
+
+**Efecto de la violación de independencia condicional.** Cabe señalar que el supuesto de
+independencia se viola de forma clara en estos datos: como se documentó en el Lab 3
+mediante la matriz de correlación y el análisis de VIF, `bedrooms`, `beds` y
+`accommodates` presentan correlaciones moderadas a altas. La consecuencia práctica es que
+el modelo tiende a producir probabilidades posteriores más polarizadas de lo que la
+evidencia justifica. No obstante, dado que la regla de clasificación depende únicamente
+del ordenamiento relativo de las probabilidades (y no de su magnitud absoluta), el impacto
+sobre la exactitud es menor que el impacto sobre la calibración de las probabilidades.
+
+---
+
+# 8. Análisis de Variables Más Importantes
+
+## 8.1 Probabilidades Condicionales: Tipo de Habitación
+
+```{r cond_room, fig.height=4}
+room_tabla <- as.data.frame(modelo_nb_clas$tables$room_type)
+colnames(room_tabla) <- c("room_type", "categoria_precio", "Probabilidad")
+
+ggplot(room_tabla, aes(x = room_type, y = Probabilidad, fill = categoria_precio)) +
+  geom_col(position = "fill") +
+  scale_fill_manual(values = c("Economica" = "#27AE60",
+                                "Intermedia" = "#F39C12",
+                                "Cara" = "#E74C3C")) +
+  labs(title = "P(Tipo de Habitación | Categoría de Precio)",
+       x = "Tipo de Habitación", y = "Probabilidad Condicional",
+       fill = "Categoría") +
+  theme_minimal(base_size = 12) +
+  theme(axis.text.x = element_text(angle = 20, hjust = 1))
+```
+
+## 8.2 Probabilidades Condicionales: Capacidad
+
+```{r cond_accom, fig.height=4}
+accom_tabla <- as.data.frame(modelo_nb_clas$tables$accommodates_cat)
+colnames(accom_tabla) <- c("accommodates", "categoria_precio", "Probabilidad")
+
+ggplot(accom_tabla, aes(x = accommodates, y = Probabilidad, fill = categoria_precio)) +
+  geom_col(position = "fill") +
+  scale_fill_manual(values = c("Economica" = "#27AE60",
+                                "Intermedia" = "#F39C12",
+                                "Cara" = "#E74C3C")) +
+  labs(title = "P(Capacidad | Categoría de Precio)",
+       x = "Capacidad (Personas)", y = "Probabilidad Condicional",
+       fill = "Categoría") +
+  theme_minimal(base_size = 12)
+```
+
+Las gráficas de probabilidades condicionales permiten inspeccionar los patrones que el
+modelo aprendió para cada predictor.
+
+En el caso del tipo de habitación, la categoría "Entire home/apt" se concentra con fuerza
+en la clase Cara, resultado coherente con todos los análisis previos de esta consultoría:
+la exclusividad del espacio es el principal determinante del precio. Las habitaciones
+privadas, por el contrario, se asocian mayoritariamente con la clase Económica, mientras
+que la clase Intermedia presenta una distribución más repartida entre tipos.
+
+Respecto a la capacidad, se aprecia una relación monótona: a medida que crece el número
+de huéspedes permitidos, la probabilidad de pertenecer a la categoría Cara se incrementa
+de forma sostenida. Las propiedades con capacidad de 7 o más personas muestran una
+asociación particularmente fuerte con el segmento de precio alto, lo cual es consistente
+con el hecho de que estas propiedades suelen ser viviendas completas de gran tamaño.
+
+---
+
+# 9. Resumen y Conclusiones del Pasaporte
+
+## 9.1 Resumen de Regresión
+
+```{r resumen_reg}
+cat("======= RESUMEN DE REGRESIÓN =======\n\n")
+cat(sprintf("%-25s  RMSE = $%8.2f  |  R² = %.4f\n",
+            "Regresión Lineal:", rmse_lm, r2_lm))
+cat(sprintf("%-25s  RMSE = $%8.2f  |  R² = %.4f\n",
+            "Árbol de Regresión:", rmse_arbol, r2_arbol))
+cat(sprintf("%-25s  RMSE = $%8.2f  |  R² = %.4f\n",
+            "Random Forest:", rmse_rf, r2_rf))
+cat(sprintf("%-25s  RMSE = $%8.2f  |  R² = %.4f\n",
+            "Naive Bayes:", rmse_nb, r2_nb))
+cat(sprintf("\n>>> Mejor modelo de regresión: %s\n",
+            comp_reg$Modelo[mejor_rmse_idx]))
+```
+
+## 9.2 Resumen de Clasificación
+
+```{r resumen_clas}
+cat("======= RESUMEN DE CLASIFICACIÓN (Naive Bayes) =======\n\n")
+cat(sprintf("Exactitud:              %.1f%%\n", exactitud_nb * 100))
+cat(sprintf("Kappa de Cohen:         %.4f\n", kappa_nb))
+cat(sprintf("Baseline:               %.1f%%\n", p_no_info_nb * 100))
+cat(sprintf("Mejora sobre baseline:  %.1f pp\n",
+            (exactitud_nb - p_no_info_nb) * 100))
+```
+
+## 9.3 Conclusiones
+
+**Actividades 1 y 2 — Regresión con Naive Bayes.** La estrategia de esperanza
+condicional produce un RMSE de \$`r round(rmse_nb, 2)` y un R² de
+`r round(r2_nb, 4)`. Las predicciones se comprimen en torno a los tres promedios por
+categoría, lo cual impide capturar la variabilidad intracategoría del precio. Este
+comportamiento no es un defecto del entrenamiento, sino una limitación inherente al uso
+de un clasificador como aproximación a un regresor.
+
+**Actividad 3 — Comparación de modelos de regresión.** Evaluando los cuatro algoritmos
+sobre la misma partición de datos, el ordenamiento de desempeño resultó ser Random
+Forest > Árbol de Regresión > Regresión Lineal > Naive Bayes. La brecha entre Random
+Forest y Naive Bayes es sustancial y se explica por la diferencia de naturaleza entre
+ambos: el primero fue diseñado para estimar funciones continuas con interacciones
+complejas, mientras que el segundo opera sobre categorías discretas sin modelar la
+estructura interna de cada clase.
+
+**Actividades 4 y 5 — Clasificación con Naive Bayes.** El clasificador alcanza una
+exactitud del `r round(exactitud_nb * 100, 1)`%, superando la línea base del
+`r round(p_no_info_nb * 100, 1)`% por un margen que resulta estadísticamente
+significativo según el intervalo de confianza reportado. El modelo aporta, por tanto,
+capacidad predictiva real y no trivial.
+
+**Actividad 6 — Análisis de la matriz de confusión.** La inspección detallada de los
+errores revela un patrón favorable para el caso de uso de SmartStay: la confusión se
+concentra entre categorías adyacentes y los errores de dos saltos (Económica↔Cara) son
+infrecuentes. La categoría Intermedia presenta el menor F1-Score, comportamiento
+coherente con lo observado en los árboles de clasificación del Laboratorio 4 y explicable
+por el solapamiento de perfiles en la zona media de la distribución de precios.
+
+---
+
