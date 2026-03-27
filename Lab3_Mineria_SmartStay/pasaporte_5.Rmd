@@ -1,6 +1,6 @@
 ---
-title: "Pasaporte_lab5_1_2"
-author: "Alejandro Anton"
+title: "Laboratorio 5 – Naive Bayes: Predicción y Clasificación de Precios Airbnb Austin"
+author: "Alejandro Antón, Juan Fernando, Fernando Mendoza"
 date: "2026-03-27"
 output:
   html_document:
@@ -14,579 +14,856 @@ output:
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(
-  echo = TRUE,
+  echo    = TRUE,
   warning = FALSE,
   message = FALSE,
   fig.align = "center",
-  fig.width = 8,
+  fig.width  = 8,
   fig.height = 5
 )
 ```
-```{r}
-getwd()
-list.files()
-```
 
+---
 
+# 0. Marco Teórico: Naive Bayes
+
+## 0.1 Fundamento Probabilístico
+
+El clasificador Naive Bayes parte del Teorema de Bayes, que relaciona las probabilidades condicionales y marginales de un evento:
+
+$$P(C_k \mid \mathbf{x}) = \frac{P(\mathbf{x} \mid C_k) \, P(C_k)}{P(\mathbf{x})}$$
+
+En esta expresión, $P(C_k \mid \mathbf{x})$ denota la probabilidad posterior de que la
+observación pertenezca a la clase $C_k$ una vez conocido el vector de predictores
+$\mathbf{x} = (x_1, \ldots, x_p)$. El término $P(\mathbf{x} \mid C_k)$ corresponde a la
+verosimilitud, $P(C_k)$ a la probabilidad a priori de la clase, y $P(\mathbf{x})$ a la
+evidencia marginal, que al ser constante para todas las clases resulta irrelevante en la
+decisión de clasificación.
+
+## 0.2 Supuesto de Independencia Condicional
+
+El adjetivo *naive* hace referencia al supuesto de que, condicionado a la clase, los
+predictores son mutuamente independientes:
+
+$$P(\mathbf{x} \mid C_k) = \prod_{j=1}^{p} P(x_j \mid C_k)$$
+
+Gracias a esta simplificación, en lugar de estimar una distribución conjunta
+$p$-dimensional basta con estimar $p$ distribuciones univariadas por clase. Domingos y
+Pazzani (1997) mostraron que, pese a que el supuesto rara vez se cumple de manera
+estricta, la regla de clasificación resultante mantiene un desempeño aceptable siempre
+que el ordenamiento relativo de las probabilidades posteriores se preserve, aunque sus
+magnitudes absolutas estén sesgadas. En el contexto de Airbnb, variables como `bedrooms`,
+`beds` y `accommodates` presentan correlaciones altas, por lo que conviene tener en cuenta
+esta limitación al interpretar las probabilidades estimadas.
+
+## 0.3 Regla de Decisión MAP
+
+La asignación de clase se realiza mediante el criterio de *Maximum A Posteriori*:
+
+$$\hat{C} = \arg\max_{k} \; P(C_k) \prod_{j=1}^{p} P(x_j \mid C_k)$$
+
+## 0.4 Suavizado de Laplace
+
+Cuando una combinación predictor–clase no se observa en el conjunto de entrenamiento,
+la verosimilitud correspondiente es cero y anula el producto completo. El suavizado de
+Laplace resuelve este problema añadiendo un conteo ficticio $\alpha$ (habitualmente
+$\alpha = 1$) a cada celda de la tabla de frecuencias:
+
+$$\hat{P}(x_j = v \mid C_k) = \frac{n_{kv} + \alpha}{n_k + \alpha \cdot |V_j|}$$
+
+donde $n_{kv}$ es la frecuencia de la combinación $(v, C_k)$, $n_k$ el total de
+observaciones de la clase $k$, y $|V_j|$ el número de valores distintos del predictor $j$.
+
+## 0.5 Extensión a Regresión
+
+Naive Bayes es, por construcción, un clasificador. No obstante, es posible derivar una
+predicción numérica a partir de las probabilidades posteriores calculando la esperanza
+condicional del precio:
+
+$$\hat{y} = \sum_{k=1}^{K} P(C_k \mid \mathbf{x}) \cdot \bar{y}_k$$
+
+donde $\bar{y}_k$ representa el precio promedio observado en el entrenamiento para la
+clase $k$. De este modo, la predicción continua es un promedio ponderado por la confianza
+del modelo en cada categoría. Cabe señalar que esta aproximación comprime las predicciones
+al rango de los promedios por clase, perdiendo la capacidad de discriminar precios dentro
+de una misma categoría.
+
+---
 
 # 1. Carga de Librerías y Datos
 
 ```{r librerias}
-# Librerías necesarias
 library(tidyverse)
-library(e1071)          
-library(caret)          
+library(e1071)
+library(caret)
 library(ggplot2)
 library(knitr)
 library(kableExtra)
+library(scales)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+library(Metrics)
 
-# Cargar datos
-load("C:/Users/aleja/Downloads/listingss.RData")
+# Cargar datos (mismo archivo que Labs 3 y 4)
+load("listings.RData")
+df <- listings
 
-# Vista inicial
-glimpse(listingss)
+glimpse(df)
 ```
 
 ---
 
 # 2. Preprocesamiento de Datos
 
-## 2.1 Limpieza de la Variable Precio
+El pipeline de limpieza que se aplica a continuación es idéntico al empleado en los
+Laboratorios 3 y 4. Mantener las mismas transformaciones y la misma semilla de partición
+es un requisito necesario para que las métricas de los distintos algoritmos sean
+directamente comparables.
 
-```{r limpieza_precio}
-# Limpiar la columna price: remover '$' y ',' y convertir a numérico
-listingss <- listingss %>%
-  mutate(
-    price_num = as.numeric(gsub("[$,]", "", price))
-  )
+## 2.1 Limpieza
 
-# Verificar valores NA
-cat("Valores NA en price_num:", sum(is.na(listingss$price_num)), "\n")
-cat("Resumen del precio numérico:\n")
-summary(listingss$price_num)
+```{r limpieza}
+df_clean <- df %>%
+  select(
+    -id, -scrape_id, -host_id,
+    -minimum_minimum_nights, -maximum_minimum_nights,
+    -minimum_maximum_nights, -maximum_maximum_nights,
+    -minimum_nights_avg_ntm, -maximum_nights_avg_ntm,
+    -availability_30, -availability_60, -availability_90,
+    -estimated_revenue_l365d
+  ) %>%
+  drop_na(price, accommodates, bedrooms, bathrooms, beds) %>%
+  mutate(price = as.numeric(gsub("[\\$,]", "", price))) %>%
+  filter(!is.na(price) & price > 0)
+
+cat("Dimensiones del dataset limpio:", dim(df_clean), "\n")
 ```
 
-## 2.2 Distribución del Precio
+Se excluyen identificadores sin valor predictivo, agregados redundantes de noches y
+disponibilidad, y la variable de ingresos estimados por riesgo de *data leakage*.
+Los registros con valores faltantes en variables estructurales (precio, capacidad,
+habitaciones, baños, camas) se descartan, y la columna `price` se convierte a formato
+numérico tras eliminar el símbolo de dólar y las comas.
+
+## 2.2 División Train / Test
+
+```{r division}
+set.seed(123)
+n <- nrow(df_clean)
+train_index <- sample(1:n, size = 0.7 * n)
+
+train <- df_clean[train_index, ]
+test  <- df_clean[-train_index, ]
+
+cat("Observaciones de entrenamiento:", nrow(train), "\n")
+cat("Observaciones de prueba:       ", nrow(test), "\n")
+```
+
+La semilla y el método de muestreo (`set.seed(123)` con `sample`) reproducen exactamente
+la misma partición 70/30 de las entregas previas.
+
+## 2.3 Distribución del Precio
 
 ```{r dist_precio}
-listings %>%
-  filter(!is.na(price_num), price_num > 0, price_num < 2000) %>%
-  ggplot(aes(x = price_num)) +
+train %>%
+  filter(price < 2000) %>%
+  ggplot(aes(x = price)) +
   geom_histogram(binwidth = 50, fill = "#2196F3", color = "white", alpha = 0.8) +
-  geom_vline(aes(xintercept = median(price_num, na.rm = TRUE)),
-             color = "red", linetype = "dashed", size = 1) +
+  geom_vline(xintercept = median(train$price), color = "red",
+             linetype = "dashed", size = 1) +
   labs(
-    title = "Distribución del Precio por Noche (Airbnb Austin)",
-    subtitle = paste0("Mediana = $",
-                      round(median(listings$price_num, na.rm = TRUE), 0)),
-    x = "Precio por Noche (USD)",
-    y = "Frecuencia"
+    title    = "Distribución del Precio por Noche (Airbnb Austin)",
+    subtitle = paste0("Mediana = $", round(median(train$price), 0),
+                      " | Media = $", round(mean(train$price), 0)),
+    x = "Precio por Noche (USD)", y = "Frecuencia"
   ) +
   theme_minimal(base_size = 13)
 ```
 
-> **Hallazgo:** La distribución del precio es asimétrica hacia la derecha (right-skewed),
-> con la mayoría de los listados concentrados entre \$50 y \$300 por noche. Hay algunos
-> valores extremos que representan propiedades de lujo.
+La distribución presenta asimetría positiva pronunciada: la masa se concentra entre \$50
+y \$300, mientras que la cola derecha se extiende hasta varios miles de dólares por las
+propiedades de lujo. Esta forma condiciona la elección de percentiles —en lugar de
+intervalos equidistantes— como criterio de discretización.
 
-## 2.3 Creación de Categorías de Precio
+## 2.4 Creación de la Variable Categórica de Precio
 
-Dado que Naive Bayes es un algoritmo de **clasificación**, convertimos el precio en
-cuatro categorías basadas en cuartiles para garantizar clases balanceadas:
+Se retoman las tres categorías definidas en el Laboratorio 4 (Económica, Intermedia y
+Cara), cuyos límites corresponden a los percentiles 33 y 66 de la distribución completa.
 
 ```{r categorias_precio}
-# Calcular cuartiles excluyendo NA y precios <= 0
-precios_validos <- listings$price_num[!is.na(listings$price_num) & listings$price_num > 0]
-q <- quantile(precios_validos, probs = c(0.25, 0.50, 0.75))
+p33 <- quantile(df_clean$price, probs = 0.33)
+p66 <- quantile(df_clean$price, probs = 0.66)
 
-cat("Cuartiles del precio:\n")
-cat("Q1 (25%):", q[1], "\n")
-cat("Q2 (50%):", q[2], "\n")
-cat("Q3 (75%):", q[3], "\n")
+cat("Percentil 33 (límite Económica-Intermedia): $", p33, "\n")
+cat("Percentil 66 (límite Intermedia-Cara):      $", p66, "\n")
 
-# Crear variable categórica
-listings <- listings %>%
-  mutate(
-    price_cat = case_when(
-      price_num <= q[1]                   ~ "Bajo",
-      price_num > q[1] & price_num <= q[2] ~ "Medio-Bajo",
-      price_num > q[2] & price_num <= q[3] ~ "Medio-Alto",
-      price_num > q[3]                    ~ "Alto",
-      TRUE                                ~ NA_character_
-    ),
-    price_cat = factor(price_cat,
-                       levels = c("Bajo", "Medio-Bajo", "Medio-Alto", "Alto"))
+asignar_categoria <- function(precio, umbral_bajo, umbral_alto) {
+  case_when(
+    precio <= umbral_bajo  ~ "Economica",
+    precio <= umbral_alto  ~ "Intermedia",
+    TRUE                   ~ "Cara"
   )
+}
 
-# Distribución de categorías
-tabla_cat <- listings %>%
-  filter(!is.na(price_cat)) %>%
-  count(price_cat) %>%
-  mutate(Porcentaje = round(n / sum(n) * 100, 1))
+train$categoria_precio <- factor(
+  asignar_categoria(train$price, p33, p66),
+  levels = c("Economica", "Intermedia", "Cara")
+)
+test$categoria_precio <- factor(
+  asignar_categoria(test$price, p33, p66),
+  levels = c("Economica", "Intermedia", "Cara")
+)
 
-kable(tabla_cat, col.names = c("Categoría de Precio", "N", "%"),
-      caption = "Distribución de Categorías de Precio") %>%
+cat("\nDistribución en entrenamiento (%):\n")
+print(round(prop.table(table(train$categoria_precio)) * 100, 1))
+cat("\nDistribución en prueba (%):\n")
+print(round(prop.table(table(test$categoria_precio)) * 100, 1))
+```
+
+Los terciles producen grupos de tamaño aproximadamente igual (~33 % cada uno), lo cual
+evita desbalances que sesguen el entrenamiento del clasificador. Un modelo que siempre
+prediga la clase mayoritaria obtendrá, como máximo, alrededor del 34 % de exactitud;
+esta cifra constituye la línea base contra la cual se evalúa cualquier modelo.
+
+## 2.5 Preparación de Variables para Naive Bayes
+
+El algoritmo requiere que los predictores sean categóricos o, en su defecto, que asuman
+una distribución paramétrica conocida. Se optó por discretizar las variables numéricas
+en intervalos con interpretación sustantiva, lo cual además facilita la estimación de las
+tablas de frecuencias condicionadas sin asumir normalidad.
+
+```{r features_nb}
+preparar_nb <- function(datos) {
+  datos %>%
+    mutate(
+      accommodates_cat = cut(accommodates,
+                             breaks = c(0, 2, 4, 6, Inf),
+                             labels = c("1-2", "3-4", "5-6", "7+"),
+                             right = TRUE),
+      bedrooms_cat = cut(bedrooms,
+                         breaks = c(-Inf, 0, 1, 2, 3, Inf),
+                         labels = c("0", "1", "2", "3", "4+")),
+      beds_cat = cut(beds,
+                     breaks = c(-Inf, 1, 2, 3, Inf),
+                     labels = c("1", "2", "3", "4+")),
+      bathrooms_cat = cut(bathrooms,
+                          breaks = c(-Inf, 1, 1.5, 2, Inf),
+                          labels = c("1", "1.5", "2", "2+")),
+      min_nights_cat = cut(minimum_nights,
+                           breaks = c(0, 1, 3, 7, 30, Inf),
+                           labels = c("1", "2-3", "4-7", "8-30", "31+"),
+                           right = TRUE),
+      room_type = as.factor(room_type)
+    )
+}
+
+train_nb <- preparar_nb(train) %>% drop_na(accommodates_cat, bedrooms_cat,
+                                            beds_cat, bathrooms_cat, min_nights_cat)
+test_nb  <- preparar_nb(test) %>% drop_na(accommodates_cat, bedrooms_cat,
+                                           beds_cat, bathrooms_cat, min_nights_cat)
+
+cat("Observaciones NB — Train:", nrow(train_nb), "| Test:", nrow(test_nb), "\n")
+```
+
+Los puntos de corte se definieron considerando la distribución marginal de cada variable y
+su relación conocida con el precio (por ejemplo, la capacidad de 7 o más huéspedes marca
+el umbral a partir del cual la mayoría de propiedades son de tipo "Entire home/apt" de
+gran tamaño). Se eliminan las pocas filas que presentan valores faltantes tras la
+discretización.
+
+---
+
+# 3. Modelo de Regresión con Naive Bayes (Actividad 1)
+
+## 3.1 Estrategia
+
+Siguiendo el procedimiento descrito en la Sección 0.5, se entrena un modelo de
+clasificación sobre las tres categorías de precio y luego se obtienen las probabilidades
+posteriores para calcular una predicción numérica mediante esperanza condicional.
+
+```{r modelo_nb_regresion}
+formula_nb <- categoria_precio ~ room_type + accommodates_cat + bathrooms_cat +
+  bedrooms_cat + beds_cat + min_nights_cat
+
+modelo_nb <- naiveBayes(formula_nb, data = train_nb, laplace = 1)
+
+precio_por_cat <- train_nb %>%
+  group_by(categoria_precio) %>%
+  summarise(precio_medio = mean(price, na.rm = TRUE)) %>%
+  arrange(categoria_precio)
+
+cat("Precio promedio por categoría (entrenamiento):\n")
+print(precio_por_cat)
+
+prob_test <- predict(modelo_nb, newdata = test_nb, type = "raw")
+
+medias_vec <- precio_por_cat$precio_medio
+pred_nb_reg <- as.numeric(prob_test %*% medias_vec)
+```
+
+El vector `medias_vec` contiene los tres precios promedio que sirven como centroides de
+cada categoría. La predicción de cada observación es, por tanto, una combinación convexa
+de estos tres valores ponderada por las probabilidades posteriores que el modelo asigna.
+
+## 3.2 Resultados del Modelo de Regresión NB (Actividad 2)
+
+```{r metricas_nb_reg}
+actual_nb <- test_nb$price
+
+rmse_nb <- sqrt(mean((actual_nb - pred_nb_reg)^2))
+mae_nb  <- mean(abs(actual_nb - pred_nb_reg))
+r2_nb   <- 1 - sum((actual_nb - pred_nb_reg)^2) / sum((actual_nb - mean(actual_nb))^2)
+mse_nb  <- mean((actual_nb - pred_nb_reg)^2)
+
+metricas_nb_reg <- data.frame(
+  Métrica = c("MSE", "RMSE", "MAE", "R²"),
+  Valor   = c(round(mse_nb, 2), round(rmse_nb, 2), round(mae_nb, 2), round(r2_nb, 4))
+)
+
+kable(metricas_nb_reg,
+      caption = "Métricas de Regresión — Naive Bayes") %>%
   kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
 ```
 
-> **Nota:** Usar cuartiles garantiza que cada categoría tenga aproximadamente el 25%
-> de las observaciones, lo que evita clases muy desbalanceadas y mejora el desempeño
-> del modelo.
+### Predicho vs. Real
 
-## 2.4 Selección y Preparación de Variables Predictoras
+```{r viz_nb_reg, fig.height=5}
+data.frame(Real = actual_nb, Predicho = pred_nb_reg) %>%
+  filter(Real < 2000) %>%
+  ggplot(aes(x = Real, y = Predicho)) +
+  geom_point(alpha = 0.3, color = "#1E88E5") +
+  geom_abline(slope = 1, intercept = 0, color = "red",
+              linetype = "dashed", size = 1) +
+  labs(
+    title    = "Precio Predicho vs. Real — Naive Bayes (Regresión)",
+    subtitle = paste0("RMSE = $", round(rmse_nb, 2),
+                      " | MAE = $", round(mae_nb, 2),
+                      " | R² = ", round(r2_nb, 4)),
+    x = "Precio Real (USD)", y = "Precio Predicho (USD)"
+  ) +
+  theme_minimal(base_size = 13) +
+  coord_cartesian(xlim = c(0, 1500), ylim = c(0, 1500))
+```
 
-```{r features}
-# Seleccionar variables predictoras relevantes
-datos <- listings %>%
-  select(
-    price_cat,
-    room_type,
-    accommodates,
-    bathrooms,
-    bedrooms,
-    beds,
-    minimum_nights,
-    neighbourhood_cleansed,
-    host_is_superhost,
-    host_identity_verified
-  ) %>%
-  # Eliminar filas con NA
-  filter(!is.na(price_cat)) %>%
-  mutate(
-    # Asegurar tipos correctos
-    accommodates        = as.numeric(accommodates),
-    bathrooms           = as.numeric(bathrooms),
-    bedrooms            = as.numeric(bedrooms),
-    beds                = as.numeric(beds),
-    minimum_nights      = as.numeric(minimum_nights),
-    room_type           = as.factor(room_type),
-    neighbourhood_cleansed = as.factor(neighbourhood_cleansed),
-    host_is_superhost   = as.factor(host_is_superhost),
-    host_identity_verified = as.factor(host_identity_verified)
-  ) %>%
-  # Discretizar variables numéricas para Naive Bayes
-  mutate(
-    accommodates_cat = cut(accommodates,
-                           breaks = c(0, 2, 4, 6, Inf),
-                           labels = c("1-2", "3-4", "5-6", "7+"),
-                           right = TRUE),
-    bedrooms_cat     = cut(replace_na(bedrooms, 0),
-                           breaks = c(-Inf, 0, 1, 2, 3, Inf),
-                           labels = c("0", "1", "2", "3", "4+")),
-    beds_cat         = cut(replace_na(beds, 1),
-                           breaks = c(-Inf, 1, 2, 3, Inf),
-                           labels = c("1", "2", "3", "4+")),
-    bathrooms_cat    = cut(replace_na(bathrooms, 1),
-                           breaks = c(-Inf, 1, 1.5, 2, Inf),
-                           labels = c("1", "1.5", "2", "2+")),
-    min_nights_cat   = cut(minimum_nights,
-                           breaks = c(0, 1, 3, 7, Inf),
-                           labels = c("1", "2-3", "4-7", "8+"),
-                           right = TRUE)
-  ) %>%
-  select(
-    price_cat, room_type, accommodates_cat,
-    bathrooms_cat, bedrooms_cat, beds_cat,
-    min_nights_cat, neighbourhood_cleansed,
-    host_is_superhost, host_identity_verified
-  ) %>%
+### Distribución de Residuos
+
+```{r residuos_nb, fig.height=4}
+data.frame(residuos = actual_nb - pred_nb_reg) %>%
+  filter(abs(residuos) < 1000) %>%
+  ggplot(aes(x = residuos)) +
+  geom_histogram(binwidth = 25, fill = "#42A5F5", color = "white", alpha = 0.8) +
+  geom_vline(xintercept = 0, color = "red", linetype = "dashed") +
+  labs(title = "Distribución de Residuos — Naive Bayes (Regresión)",
+       x = "Residuo (Real - Predicho)", y = "Frecuencia") +
+  theme_minimal(base_size = 13)
+```
+
+El gráfico de dispersión revela con claridad la limitación central de esta estrategia: las
+predicciones forman bandas horizontales en torno a los tres promedios por categoría, sin
+capacidad para discriminar variaciones dentro de cada grupo. El patrón se manifiesta en
+dos problemas concretos. Primero, las propiedades de precio elevado (superiores a \$500)
+reciben predicciones sensiblemente inferiores al valor real, dado que el promedio de la
+categoría "Cara" diluye los valores extremos con los moderadamente altos. Segundo, las
+propiedades más económicas tienden a ser sobreestimadas por la misma lógica inversa.
+
+La distribución de residuos confirma lo anterior: la masa se concentra en cero pero
+presenta una cola derecha pesada que corresponde a las propiedades de lujo mal
+capturadas. El valor de R² obtenido refleja esta limitación estructural y no debe
+interpretarse como un fallo del entrenamiento, sino como una consecuencia de utilizar un
+clasificador de tres clases para aproximar una variable continua.
+
+---
+
+# 4. Comparación con Modelos de Regresión Anteriores (Actividad 3)
+
+Para que la comparación sea metodológicamente válida, se reentrenan los modelos de
+regresión lineal (Lab 3), árbol de regresión (Lab 4) y Random Forest (Lab 4) dentro de
+este mismo script, utilizando los conjuntos `train` y `test` ya definidos. De este modo
+se garantiza que los cuatro algoritmos se evalúan sobre exactamente las mismas
+observaciones.
+
+## 4.1 Recomputación de Modelos Anteriores
+
+```{r recomputar_regresion}
+# ── Regresión Lineal (modelo óptimo del Lab 3) ──────────────────────────────
+modelo_lm <- lm(
+  price ~ accommodates + bathrooms + number_of_reviews + room_type,
+  data = train
+)
+pred_lm <- pmax(predict(modelo_lm, newdata = test), 0)
+
+rmse_lm <- sqrt(mean((test$price - pred_lm)^2))
+mae_lm  <- mean(abs(test$price - pred_lm))
+r2_lm   <- 1 - sum((test$price - pred_lm)^2) / sum((test$price - mean(test$price))^2)
+mse_lm  <- mean((test$price - pred_lm)^2)
+
+# ── Árbol de Regresión (mejor profundidad del Lab 4) ────────────────────────
+arbol_reg <- rpart(
+  price ~ accommodates + bathrooms + bedrooms + beds +
+    room_type + number_of_reviews + minimum_nights,
+  data    = train,
+  method  = "anova",
+  control = rpart.control(maxdepth = 6, minsplit = 5)
+)
+pred_arbol <- predict(arbol_reg, newdata = test)
+
+rmse_arbol <- sqrt(mean((test$price - pred_arbol)^2))
+mae_arbol  <- mean(abs(test$price - pred_arbol))
+r2_arbol   <- 1 - sum((test$price - pred_arbol)^2) / sum((test$price - mean(test$price))^2)
+mse_arbol  <- mean((test$price - pred_arbol)^2)
+
+# ── Random Forest de Regresión (Lab 4) ──────────────────────────────────────
+set.seed(123)
+train_rf <- train %>%
+  select(price, accommodates, bathrooms, bedrooms, beds,
+         room_type, number_of_reviews, minimum_nights) %>%
+  drop_na()
+test_rf <- test %>%
+  select(price, accommodates, bathrooms, bedrooms, beds,
+         room_type, number_of_reviews, minimum_nights) %>%
   drop_na()
 
-cat("Dimensiones del dataset final:", dim(datos), "\n")
-cat("Distribución de la variable respuesta:\n")
-print(prop.table(table(datos$price_cat)) * 100)
+modelo_rf_reg <- randomForest(
+  price ~ ., data = train_rf, ntree = 100, importance = TRUE
+)
+pred_rf_reg <- predict(modelo_rf_reg, newdata = test_rf)
+
+rmse_rf <- sqrt(mean((test_rf$price - pred_rf_reg)^2))
+mae_rf  <- mean(abs(test_rf$price - pred_rf_reg))
+r2_rf   <- 1 - sum((test_rf$price - pred_rf_reg)^2) / sum((test_rf$price - mean(test_rf$price))^2)
+mse_rf  <- mean((test_rf$price - pred_rf_reg)^2)
 ```
 
----
+## 4.2 Tabla Comparativa
 
-# 3. División Train / Test
-
-Se usa la **misma semilla** que en análisis anteriores (seed = 123) para garantizar
-comparabilidad entre modelos.
-
-```{r train_test}
-set.seed(123)
-
-# Índices de entrenamiento: 70%
-train_index <- createDataPartition(datos$price_cat, p = 0.70, list = FALSE)
-
-train_data <- datos[ train_index, ]
-test_data  <- datos[-train_index, ]
-
-cat("Tamaño del conjunto de entrenamiento:", nrow(train_data), "\n")
-cat("Tamaño del conjunto de prueba:       ", nrow(test_data), "\n\n")
-
-# Verificar proporciones de clases en ambos conjuntos
-cat("Proporción de clases - Train:\n")
-round(prop.table(table(train_data$price_cat)) * 100, 1)
-cat("\nProporción de clases - Test:\n")
-round(prop.table(table(test_data$price_cat)) * 100, 1)
-```
-
-> **Interpretación:** La partición estratificada (70/30) asegura que las proporciones
-> de cada clase de precio sean similares en entrenamiento y prueba, lo cual es esencial
-> para obtener estimaciones de desempeño confiables.
-
----
-
-# 4. Entrenamiento del Modelo Naive Bayes
-
-## 4.1 Modelo Base
-
-```{r modelo_nb}
-# Entrenar Naive Bayes con corrección de Laplace = 1
-# para evitar probabilidades cero en categorías no vistas
-modelo_nb <- naiveBayes(
-  price_cat ~ .,
-  data   = train_data,
-  laplace = 1          # Suavizado de Laplace
+```{r tabla_comp_regresion}
+comp_reg <- data.frame(
+  Modelo = c("Regresión Lineal\n(Lab 3 - Óptimo)",
+             "Árbol de Regresión\n(Lab 4 - Prof. 6)",
+             "Random Forest\n(Lab 4 - 100 árboles)",
+             "Naive Bayes\n(Lab 5 - Esperanza Cond.)"),
+  MSE    = round(c(mse_lm, mse_arbol, mse_rf, mse_nb), 0),
+  RMSE   = round(c(rmse_lm, rmse_arbol, rmse_rf, rmse_nb), 2),
+  MAE    = round(c(mae_lm, mae_arbol, mae_rf, mae_nb), 2),
+  R2     = round(c(r2_lm, r2_arbol, r2_rf, r2_nb), 4)
 )
 
-# Mostrar resumen del modelo
-cat("===== MODELO NAIVE BAYES =====\n")
-print(modelo_nb)
+mejor_rmse_idx <- which.min(comp_reg$RMSE)
+
+kable(comp_reg,
+      col.names = c("Modelo", "MSE", "RMSE ($)", "MAE ($)", "R²"),
+      caption = "Comparación de Modelos de Regresión — Mismo Train/Test") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE) %>%
+  row_spec(mejor_rmse_idx, bold = TRUE, background = "#D5F5E3")
 ```
 
-## 4.2 Interpretación de las Probabilidades A Priori
+```{r viz_comp_regresion, fig.height=5}
+comp_reg_plot <- data.frame(
+  Modelo = c("Reg. Lineal", "Árbol Reg.", "Random Forest", "Naive Bayes"),
+  RMSE   = c(rmse_lm, rmse_arbol, rmse_rf, rmse_nb),
+  MAE    = c(mae_lm, mae_arbol, mae_rf, mae_nb)
+)
 
-```{r apriori}
-# Probabilidades a priori
+comp_reg_plot %>%
+  pivot_longer(cols = c(RMSE, MAE), names_to = "Metrica", values_to = "Valor") %>%
+  ggplot(aes(x = reorder(Modelo, Valor), y = Valor, fill = Metrica)) +
+  geom_col(position = "dodge", alpha = 0.85, width = 0.6) +
+  coord_flip() +
+  scale_fill_manual(values = c("RMSE" = "#E74C3C", "MAE" = "#3498DB")) +
+  labs(title = "Comparación de Error de Regresión por Modelo",
+       subtitle = "Menor es mejor — Mismos datos de entrenamiento y prueba",
+       x = NULL, y = "Error (USD)", fill = "Métrica") +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "top")
+```
+
+```{r viz_r2_comp, fig.height=4}
+comp_reg_plot2 <- data.frame(
+  Modelo = c("Reg. Lineal", "Árbol Reg.", "Random Forest", "Naive Bayes"),
+  R2     = c(r2_lm, r2_arbol, r2_rf, r2_nb)
+)
+
+ggplot(comp_reg_plot2, aes(x = reorder(Modelo, R2), y = R2, fill = Modelo)) +
+  geom_col(alpha = 0.85, width = 0.6, show.legend = FALSE) +
+  geom_text(aes(label = paste0(round(R2 * 100, 1), "%")),
+            hjust = -0.1, size = 4, fontface = "bold") +
+  coord_flip(ylim = c(0, max(c(r2_lm, r2_arbol, r2_rf, r2_nb), na.rm = TRUE) * 1.3)) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "R² por Modelo de Regresión",
+       subtitle = "Mayor es mejor", x = NULL, y = "R²") +
+  theme_minimal(base_size = 13)
+```
+
+Los resultados permiten establecer un ordenamiento claro entre los cuatro algoritmos.
+Random Forest alcanza el menor error y el mayor R² del conjunto, lo cual se explica por
+su capacidad de modelar interacciones no lineales entre predictores (e.g., la combinación
+de tipo de propiedad con número de habitaciones y baños) y de reducir la varianza
+mediante el promedio de múltiples árboles decorrelacionados. El árbol de regresión
+individual se ubica en segundo lugar: captura las mismas no-linealidades a través de sus
+particiones recursivas, pero al depender de un solo árbol es más susceptible a la
+variabilidad muestral. La regresión lineal ocupa la tercera posición; su supuesto de
+proporcionalidad constante entre predictores y precio limita su desempeño en un mercado
+donde los incrementos de precio no son proporcionales al número de habitaciones o de
+huéspedes.
+
+Naive Bayes presenta el mayor error de regresión, resultado que era previsible y que no
+refleja un fallo del algoritmo sino una inadecuación de la tarea: un clasificador de tres
+clases no puede reproducir la variabilidad de una variable continua con miles de valores
+posibles. Su utilidad radica en la clasificación, no en la predicción puntual del precio.
+
+En términos del objetivo de SmartStay Advisors de estimar precios competitivos, Random
+Forest se consolida como el modelo de regresión más adecuado hasta este punto de la
+consultoría.
+
+---
+
+# 5. Modelo de Clasificación con Naive Bayes (Actividad 4)
+
+## 5.1 Entrenamiento del Modelo
+
+Se ajusta el clasificador Naive Bayes con suavizado de Laplace ($\alpha = 1$) sobre las
+variables categorizadas. La fórmula incluye seis predictores que resumen el tipo de
+propiedad, su tamaño, y la política de estancia mínima.
+
+```{r modelo_nb_clas}
+modelo_nb_clas <- naiveBayes(formula_nb, data = train_nb, laplace = 1)
+
+cat("===== MODELO NAIVE BAYES (Clasificación) =====\n")
+cat("Clases:", levels(train_nb$categoria_precio), "\n")
+cat("Suavizado de Laplace: alpha = 1\n")
+cat("Variables predictoras: room_type, accommodates_cat, bathrooms_cat,\n")
+cat("                       bedrooms_cat, beds_cat, min_nights_cat\n\n")
+```
+
+## 5.2 Probabilidades A Priori
+
+```{r apriori, fig.height=4}
 apriori_df <- data.frame(
-  Categoria = names(modelo_nb$apriori),
-  Probabilidad = as.numeric(prop.table(modelo_nb$apriori))
+  Categoria    = names(modelo_nb_clas$apriori),
+  Probabilidad = as.numeric(prop.table(modelo_nb_clas$apriori))
 )
 
 ggplot(apriori_df, aes(x = Categoria, y = Probabilidad, fill = Categoria)) +
   geom_col(show.legend = FALSE) +
-  geom_text(aes(label = scales::percent(Probabilidad, accuracy = 0.1)),
+  geom_text(aes(label = percent(Probabilidad, accuracy = 0.1)),
             vjust = -0.5, size = 4) +
-  scale_fill_brewer(palette = "Blues") +
-  labs(
-    title = "Probabilidades A Priori por Categoría de Precio",
-    x = "Categoría de Precio",
-    y = "Probabilidad"
-  ) +
+  scale_fill_manual(values = c("Economica" = "#27AE60",
+                                "Intermedia" = "#F39C12",
+                                "Cara" = "#E74C3C")) +
+  labs(title = "Probabilidades A Priori P(Ck)",
+       x = "Categoría de Precio", y = "Probabilidad") +
   theme_minimal(base_size = 13) +
-  ylim(0, 0.35)
+  ylim(0, 0.45)
 ```
 
-> **Interpretación:** Las probabilidades a priori representan la distribución de clases
-> en el conjunto de entrenamiento. Al estar basadas en cuartiles, cada clase tiene
-> aproximadamente 25% de probabilidad, lo que indica un conjunto de datos bien balanceado.
-> Esto es importante porque un modelo que simplemente predice la clase más frecuente
-> tendría solo ~25% de exactitud, lo cual es nuestra línea base.
+Las probabilidades a priori coinciden, como era esperado, con las proporciones de cada
+clase en el conjunto de entrenamiento. El balance aproximado entre las tres categorías
+implica que la línea base de un clasificador trivial (que siempre asigne la clase más
+frecuente) ronda el 34 %. Todo modelo que se desempeñe por encima de este umbral puede
+considerarse informativo.
 
 ---
 
-# 5. Predicciones y Evaluación
+# 6. Predicciones y Evaluación en Test (Actividad 5)
 
-## 5.1 Predicciones en el Conjunto de Prueba
+## 6.1 Predicciones
 
-```{r predicciones}
-# Predicciones de clase
-pred_clase <- predict(modelo_nb, newdata = test_data, type = "class")
+```{r predicciones_clas}
+pred_nb_clase <- predict(modelo_nb_clas, newdata = test_nb, type = "class")
+pred_nb_prob  <- predict(modelo_nb_clas, newdata = test_nb, type = "raw")
 
-# Predicciones de probabilidad
-pred_prob  <- predict(modelo_nb, newdata = test_data, type = "raw")
-
-# Primeras predicciones
 head(data.frame(
-  Real      = test_data$price_cat,
-  Predicho  = pred_clase,
-  P_Bajo    = round(pred_prob[, "Bajo"], 3),
-  P_MedioBajo = round(pred_prob[, "Medio-Bajo"], 3),
-  P_MedioAlto = round(pred_prob[, "Medio-Alto"], 3),
-  P_Alto    = round(pred_prob[, "Alto"], 3)
+  Real        = test_nb$categoria_precio,
+  Predicho    = pred_nb_clase,
+  P_Economica = round(pred_nb_prob[, "Economica"], 3),
+  P_Intermedia = round(pred_nb_prob[, "Intermedia"], 3),
+  P_Cara      = round(pred_nb_prob[, "Cara"], 3)
 ), 10) %>%
-  kable(caption = "Muestra de Predicciones con Probabilidades") %>%
+  kable(caption = "Muestra de Predicciones con Probabilidades Posteriores") %>%
   kable_styling(bootstrap_options = c("striped", "hover"))
 ```
 
-## 5.2 Matriz de Confusión
+Cada fila reporta las tres probabilidades posteriores estimadas; la clase asignada
+corresponde a la de mayor valor (criterio MAP).
 
-```{r confusion}
-# Matriz de confusión
-conf_matrix <- confusionMatrix(pred_clase, test_data$price_cat)
-print(conf_matrix)
-```
+## 6.2 Eficiencia Global
 
-## 5.3 Visualización de la Matriz de Confusión
+```{r eficiencia_nb}
+mc_nb <- confusionMatrix(pred_nb_clase, test_nb$categoria_precio)
 
-```{r viz_confusion}
-# Convertir a data frame para ggplot
-conf_df <- as.data.frame(conf_matrix$table)
-colnames(conf_df) <- c("Predicho", "Real", "Frecuencia")
+exactitud_nb <- mc_nb$overall["Accuracy"]
+kappa_nb     <- mc_nb$overall["Kappa"]
+p_no_info_nb <- mc_nb$overall["AccuracyNull"]
 
-ggplot(conf_df, aes(x = Real, y = Predicho, fill = Frecuencia)) +
-  geom_tile(color = "white") +
-  geom_text(aes(label = Frecuencia), size = 5, fontface = "bold") +
-  scale_fill_gradient(low = "#E3F2FD", high = "#1565C0") +
-  labs(
-    title = "Matriz de Confusión - Naive Bayes",
-    subtitle = "Filas = Predicho | Columnas = Real",
-    x = "Valor Real",
-    y = "Valor Predicho",
-    fill = "N"
-  ) +
-  theme_minimal(base_size = 13)
-```
-
----
-
-# 6. Métricas de Desempeño
-
-## 6.1 Exactitud Global y Estadísticos
-
-```{r metricas_globales}
-# Extraer métricas
-exactitud   <- conf_matrix$overall["Accuracy"]
-kappa       <- conf_matrix$overall["Kappa"]
-ic_bajo     <- conf_matrix$overall["AccuracyLower"]
-ic_alto     <- conf_matrix$overall["AccuracyUpper"]
-p_no_info   <- conf_matrix$overall["AccuracyNull"]
-
-metricas_globales <- data.frame(
+metricas_nb_glob <- data.frame(
   Métrica = c("Exactitud (Accuracy)",
-              "Exactitud - IC 95% inferior",
-              "Exactitud - IC 95% superior",
+              "IC 95% inferior",
+              "IC 95% superior",
               "Kappa de Cohen",
-              "Exactitud sin información (baseline)"),
-  Valor = round(c(exactitud, ic_bajo, ic_alto, kappa, p_no_info), 4)
+              "Baseline (No Information Rate)",
+              "Mejora sobre baseline"),
+  Valor = c(
+    paste0(round(exactitud_nb * 100, 1), "%"),
+    paste0(round(mc_nb$overall["AccuracyLower"] * 100, 1), "%"),
+    paste0(round(mc_nb$overall["AccuracyUpper"] * 100, 1), "%"),
+    round(kappa_nb, 4),
+    paste0(round(p_no_info_nb * 100, 1), "%"),
+    paste0(round((exactitud_nb - p_no_info_nb) * 100, 1), " pp")
+  )
 )
 
-kable(metricas_globales, caption = "Métricas Globales del Modelo") %>%
+kable(metricas_nb_glob,
+      caption = "Métricas Globales — Naive Bayes (Clasificación)") %>%
   kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
 ```
 
-## 6.2 Métricas por Clase
+El modelo alcanza una exactitud del `r round(exactitud_nb * 100, 1)`%, lo que supone una
+mejora de `r round((exactitud_nb - p_no_info_nb) * 100, 1)` puntos porcentuales respecto
+a la línea base. El intervalo de confianza al 95 % permite afirmar que esta diferencia no
+es atribuible al azar muestral.
 
-```{r metricas_clase}
-# Métricas por clase
-metricas_clase <- as.data.frame(conf_matrix$byClass)
-metricas_clase$Clase <- rownames(metricas_clase)
+El coeficiente Kappa de Cohen (`r round(kappa_nb, 3)`) complementa la exactitud al
+descontar la concordancia esperada por azar. La escala de referencia propuesta por Landis
+y Koch (1977) sitúa valores entre 0.21 y 0.40 como acuerdo *aceptable*, entre 0.41 y
+0.60 como *moderado*, y entre 0.61 y 0.80 como *sustancial*. El valor obtenido se
+interpreta dentro de este marco.
 
-metricas_sel <- metricas_clase %>%
+---
+
+# 7. Análisis de la Matriz de Confusión (Actividad 6)
+
+## 7.1 Matriz de Confusión Completa
+
+```{r confusion_nb}
+print(mc_nb)
+```
+
+## 7.2 Visualización
+
+```{r viz_confusion_nb, fig.height=5}
+mc_nb_df <- as.data.frame(mc_nb$table)
+colnames(mc_nb_df) <- c("Predicho", "Real", "Frecuencia")
+
+ggplot(mc_nb_df, aes(x = Real, y = Predicho, fill = Frecuencia)) +
+  geom_tile(color = "white", linewidth = 1.2) +
+  geom_text(aes(label = Frecuencia), size = 6, fontface = "bold") +
+  scale_fill_gradient(low = "#F8F9FA", high = "#2C3E50") +
+  labs(
+    title    = "Matriz de Confusión — Naive Bayes (Clasificación)",
+    subtitle = paste0("Exactitud global: ", round(exactitud_nb * 100, 1), "%"),
+    x = "Categoría Real", y = "Categoría Predicha", fill = "N"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(panel.grid = element_blank())
+```
+
+## 7.3 Métricas por Clase
+
+```{r metricas_clase_nb}
+metricas_clase_nb <- as.data.frame(mc_nb$byClass)
+metricas_clase_nb$Clase <- rownames(metricas_clase_nb)
+
+metricas_sel_nb <- metricas_clase_nb %>%
   select(Clase, Sensitivity, Specificity,
          `Pos Pred Value`, `Neg Pred Value`,
          `Balanced Accuracy`, F1) %>%
   mutate(across(where(is.numeric), ~ round(.x, 4)))
 
-kable(metricas_sel,
+kable(metricas_sel_nb,
       col.names = c("Clase", "Sensibilidad", "Especificidad",
-                    "VPP (Precisión)", "VPN", "Acc. Balanceada", "F1"),
-      caption = "Métricas por Categoría de Precio") %>%
+                    "Precisión (VPP)", "VPN", "Acc. Balanceada", "F1-Score"),
+      caption = "Métricas Detalladas por Categoría — Naive Bayes") %>%
   kable_styling(bootstrap_options = c("striped", "hover"))
 ```
 
-## 6.3 Visualización de F1-Score por Clase
+## 7.4 F1-Score por Clase
 
-```{r viz_f1}
-metricas_clase %>%
+```{r viz_f1_nb, fig.height=4}
+metricas_clase_nb %>%
   filter(!is.na(F1)) %>%
   ggplot(aes(x = Clase, y = F1, fill = Clase)) +
   geom_col(show.legend = FALSE) +
   geom_text(aes(label = round(F1, 3)), vjust = -0.5, size = 4) +
-  scale_fill_brewer(palette = "Set2") +
-  labs(
-    title = "F1-Score por Categoría de Precio",
-    subtitle = "Equilibrio entre Precisión y Sensibilidad",
-    x = "Categoría de Precio",
-    y = "F1-Score"
-  ) +
+  scale_fill_manual(values = c("#27AE60", "#F39C12", "#E74C3C")) +
+  labs(title = "F1-Score por Categoría de Precio — Naive Bayes",
+       subtitle = "Media armónica entre Precisión y Sensibilidad",
+       x = "Categoría", y = "F1-Score") +
   theme_minimal(base_size = 13) +
   ylim(0, 1)
 ```
 
-## 6.4 Sensibilidad y Especificidad por Clase
+## 7.5 Sensibilidad vs. Especificidad
 
-```{r viz_sens_spec}
-metricas_clase %>%
+```{r viz_sens_spec_nb, fig.height=4}
+metricas_clase_nb %>%
   select(Clase, Sensitivity, Specificity) %>%
   pivot_longer(cols = c(Sensitivity, Specificity),
-               names_to = "Métrica",
-               values_to = "Valor") %>%
+               names_to = "Métrica", values_to = "Valor") %>%
   filter(!is.na(Valor)) %>%
   ggplot(aes(x = Clase, y = Valor, fill = Métrica)) +
   geom_col(position = "dodge") +
   geom_text(aes(label = round(Valor, 3)),
-            position = position_dodge(0.9),
-            vjust = -0.5, size = 3.5) +
+            position = position_dodge(0.9), vjust = -0.5, size = 3.5) +
   scale_fill_manual(values = c("#42A5F5", "#EF5350")) +
-  labs(
-    title = "Sensibilidad y Especificidad por Categoría de Precio",
-    x = "Categoría",
-    y = "Valor",
-    fill = "Métrica"
-  ) +
+  labs(title = "Sensibilidad y Especificidad por Categoría — Naive Bayes",
+       x = "Categoría", y = "Valor", fill = "Métrica") +
   theme_minimal(base_size = 13) +
   ylim(0, 1.1)
 ```
 
+## 7.6 Discusión de Errores
+
+La diagonal principal de la matriz concentra las clasificaciones correctas; todo valor
+fuera de ella representa un error. A continuación se examina la distribución de estos
+errores atendiendo a tres ejes: dónde el modelo falla con mayor frecuencia, dónde
+presenta mayor acierto, y cuál es la repercusión práctica de cada tipo de error.
+
+**Categoría con mayor dificultad.** La clase Intermedia acumula la mayor proporción de
+errores de clasificación. Este resultado era anticipable: las propiedades de precio
+intermedio comparten atributos tanto con las económicas (habitaciones privadas de
+capacidad moderada) como con las caras (apartamentos completos pequeños). La frontera
+de decisión entre estos segmentos es difusa porque las variables estructurales no
+presentan saltos abruptos en la zona media de la distribución de precios. Este mismo
+fenómeno se observó en los árboles de clasificación del Laboratorio 4.
+
+**Categorías mejor predichas.** Los extremos —Económica y Cara— obtienen los F1-Score
+más altos. Las propiedades económicas se caracterizan de manera bastante homogénea por
+ser habitaciones privadas de baja capacidad, mientras que las caras corresponden
+predominantemente a viviendas completas con múltiples habitaciones y baños. Estos perfiles
+diferenciados facilitan la separación por parte del clasificador.
+
+**Relevancia de los errores en el contexto de negocio.** Desde la perspectiva de SmartStay
+Advisors, los errores de clasificación no son igualmente costosos. Confundir una propiedad
+cara con una económica (o viceversa) implica una desviación de precio considerable que
+podría derivar en pérdida de ingresos o en la pérdida de un cliente. Al inspeccionar la
+matriz se observa que estos errores de dos saltos (Económica↔Cara) son los menos
+frecuentes. La gran mayoría de las clasificaciones incorrectas ocurren entre categorías
+adyacentes, donde la diferencia de precio real es menor y, por tanto, el impacto operativo
+resulta más acotado.
+
+**Efecto de la violación de independencia condicional.** Cabe señalar que el supuesto de
+independencia se viola de forma clara en estos datos: como se documentó en el Lab 3
+mediante la matriz de correlación y el análisis de VIF, `bedrooms`, `beds` y
+`accommodates` presentan correlaciones moderadas a altas. La consecuencia práctica es que
+el modelo tiende a producir probabilidades posteriores más polarizadas de lo que la
+evidencia justifica. No obstante, dado que la regla de clasificación depende únicamente
+del ordenamiento relativo de las probabilidades (y no de su magnitud absoluta), el impacto
+sobre la exactitud es menor que el impacto sobre la calibración de las probabilidades.
+
 ---
 
-# 7. Análisis de Variables Más Importantes
+# 8. Análisis de Variables Más Importantes
 
-## 7.1 Probabilidades Condicionales por Variable
+## 8.1 Probabilidades Condicionales: Tipo de Habitación
 
-```{r cond_prob_room}
-# Probabilidades condicionales: room_type
-room_nb <- as.data.frame(modelo_nb$tables$room_type)
-colnames(room_nb) <- c("room_type", "price_cat", "Probabilidad")
+```{r cond_room, fig.height=4}
+room_tabla <- as.data.frame(modelo_nb_clas$tables$room_type)
+colnames(room_tabla) <- c("room_type", "categoria_precio", "Probabilidad")
 
-ggplot(room_nb, aes(x = room_type, y = Probabilidad, fill = price_cat)) +
+ggplot(room_tabla, aes(x = room_type, y = Probabilidad, fill = categoria_precio)) +
   geom_col(position = "fill") +
-  scale_fill_brewer(palette = "RdYlBu") +
-  labs(
-    title = "P(Precio | Tipo de Habitación)",
-    subtitle = "Probabilidad condicional aprendida por Naive Bayes",
-    x = "Tipo de Habitación",
-    y = "Probabilidad Condicional",
-    fill = "Categoría Precio"
-  ) +
+  scale_fill_manual(values = c("Economica" = "#27AE60",
+                                "Intermedia" = "#F39C12",
+                                "Cara" = "#E74C3C")) +
+  labs(title = "P(Tipo de Habitación | Categoría de Precio)",
+       x = "Tipo de Habitación", y = "Probabilidad Condicional",
+       fill = "Categoría") +
   theme_minimal(base_size = 12) +
   theme(axis.text.x = element_text(angle = 20, hjust = 1))
 ```
 
-```{r cond_prob_accom}
-# Probabilidades condicionales: accommodates
-accom_nb <- as.data.frame(modelo_nb$tables$accommodates_cat)
-colnames(accom_nb) <- c("accommodates", "price_cat", "Probabilidad")
+## 8.2 Probabilidades Condicionales: Capacidad
 
-ggplot(accom_nb, aes(x = accommodates, y = Probabilidad, fill = price_cat)) +
+```{r cond_accom, fig.height=4}
+accom_tabla <- as.data.frame(modelo_nb_clas$tables$accommodates_cat)
+colnames(accom_tabla) <- c("accommodates", "categoria_precio", "Probabilidad")
+
+ggplot(accom_tabla, aes(x = accommodates, y = Probabilidad, fill = categoria_precio)) +
   geom_col(position = "fill") +
-  scale_fill_brewer(palette = "RdYlBu") +
-  labs(
-    title = "P(Precio | Número de Huéspedes)",
-    x = "Capacidad (Personas)",
-    y = "Probabilidad Condicional",
-    fill = "Categoría Precio"
-  ) +
+  scale_fill_manual(values = c("Economica" = "#27AE60",
+                                "Intermedia" = "#F39C12",
+                                "Cara" = "#E74C3C")) +
+  labs(title = "P(Capacidad | Categoría de Precio)",
+       x = "Capacidad (Personas)", y = "Probabilidad Condicional",
+       fill = "Categoría") +
   theme_minimal(base_size = 12)
 ```
 
-> **Interpretación:** Las gráficas de probabilidades condicionales revelan los patrones
-> aprendidos por el modelo:
->
-> - **Tipo de habitación:** Las propiedades de tipo "Entire home/apt" tienen mayor
->   probabilidad de caer en las categorías Medio-Alto y Alto, mientras que los cuartos
->   privados se concentran en las categorías Bajo y Medio-Bajo.
-> - **Capacidad:** A mayor número de huéspedes admitidos, mayor la probabilidad de
->   un precio Alto, lo cual es intuitivamente correcto.
+Las gráficas de probabilidades condicionales permiten inspeccionar los patrones que el
+modelo aprendió para cada predictor.
+
+En el caso del tipo de habitación, la categoría "Entire home/apt" se concentra con fuerza
+en la clase Cara, resultado coherente con todos los análisis previos de esta consultoría:
+la exclusividad del espacio es el principal determinante del precio. Las habitaciones
+privadas, por el contrario, se asocian mayoritariamente con la clase Económica, mientras
+que la clase Intermedia presenta una distribución más repartida entre tipos.
+
+Respecto a la capacidad, se aprecia una relación monótona: a medida que crece el número
+de huéspedes permitidos, la probabilidad de pertenecer a la categoría Cara se incrementa
+de forma sostenida. Las propiedades con capacidad de 7 o más personas muestran una
+asociación particularmente fuerte con el segmento de precio alto, lo cual es consistente
+con el hecho de que estas propiedades suelen ser viviendas completas de gran tamaño.
 
 ---
 
-# 8. Análisis de Resultados y Conclusiones
+# 9. Resumen y Conclusiones del Pasaporte
 
-## 8.1 Resumen Ejecutivo de Desempeño
+## 9.1 Resumen de Regresión
 
-```{r resumen_final}
-# Tabla resumen final
-resumen <- data.frame(
-  Aspecto = c(
-    "Exactitud global",
-    "Kappa de Cohen",
-    "Baseline (sin información)",
-    "Mejora sobre baseline",
-    "Mejor clase predicha (F1)",
-    "Clase con mayor dificultad (F1)"
-  ),
-  Resultado = c(
-    paste0(round(exactitud * 100, 1), "%"),
-    round(kappa, 3),
-    paste0(round(p_no_info * 100, 1), "%"),
-    paste0(round((exactitud - p_no_info) * 100, 1), " pp"),
-    metricas_clase$Clase[which.max(metricas_clase$F1)],
-    metricas_clase$Clase[which.min(metricas_clase$F1)]
-  )
-)
-
-kable(resumen, caption = "Resumen de Desempeño del Modelo Naive Bayes") %>%
-  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE) %>%
-  row_spec(0, bold = TRUE)
+```{r resumen_reg}
+cat("======= RESUMEN DE REGRESIÓN =======\n\n")
+cat(sprintf("%-25s  RMSE = $%8.2f  |  R² = %.4f\n",
+            "Regresión Lineal:", rmse_lm, r2_lm))
+cat(sprintf("%-25s  RMSE = $%8.2f  |  R² = %.4f\n",
+            "Árbol de Regresión:", rmse_arbol, r2_arbol))
+cat(sprintf("%-25s  RMSE = $%8.2f  |  R² = %.4f\n",
+            "Random Forest:", rmse_rf, r2_rf))
+cat(sprintf("%-25s  RMSE = $%8.2f  |  R² = %.4f\n",
+            "Naive Bayes:", rmse_nb, r2_nb))
+cat(sprintf("\n>>> Mejor modelo de regresión: %s\n",
+            comp_reg$Modelo[mejor_rmse_idx]))
 ```
 
-## 8.2 Discusión de Hallazgos
+## 9.2 Resumen de Clasificación
 
-**Sobre la exactitud global:**
-
-El modelo de Naive Bayes alcanza una exactitud de aproximadamente **`r round(exactitud * 100, 1)`%**,
-lo que se compara con una línea base del **`r round(p_no_info * 100, 1)`%** (clasificador
-que siempre predice la clase más frecuente). Esto indica que el modelo **sí aporta valor
-predictivo** por encima del azar.
-
-**Sobre el Kappa de Cohen:**
-
-El coeficiente Kappa de `r round(kappa, 3)` indica un **acuerdo `r ifelse(kappa > 0.6, "sustancial", ifelse(kappa > 0.4, "moderado", "débil a moderado"))`**
-entre las predicciones y los valores reales, considerando el efecto del azar. Valores de
-Kappa entre 0.41-0.60 se consideran moderados; entre 0.61-0.80, sustanciales.
-
-**Sobre las clases:**
-
-- Las categorías **extremas (Bajo y Alto)** tienden a predecirse mejor porque tienen
-  patrones más diferenciados (propiedades muy baratas vs. muy caras tienen características
-  más distintas).
-- Las categorías **intermedias (Medio-Bajo, Medio-Alto)** presentan mayor confusión entre
-  sí, lo cual es esperable dado que sus características se solapan con frecuencia.
-
-**Sobre las limitaciones de Naive Bayes:**
-
-1. **Independencia condicional:** Naive Bayes asume que los predictores son independientes
-   dado el precio. En datos de Airbnb, variables como `bedrooms`, `beds` y `accommodates`
-   están altamente correlacionadas, lo que viola esta suposición y puede reducir el
-   rendimiento.
-
-2. **Discretización:** La necesidad de convertir variables numéricas a categorías implica
-   pérdida de información granular (e.g., tratar a una propiedad de \$100 igual que una
-   de \$149 en la categoría "Medio-Bajo").
-
-3. **Variables de alta cardinalidad:** La variable `neighbourhood_cleansed` tiene muchas
-   categorías, lo que puede dispersar las estimaciones de probabilidad.
-
-**Ventajas del enfoque:**
-
-- Es **computacionalmente eficiente** y escalable.
-- **Funciona bien con pocos datos** por clase.
-- Provee **probabilidades interpretables** para cada categoría, no solo una predicción puntual.
-- Es **robusto frente a variables irrelevantes** en muchos casos prácticos.
-
-## 8.3 Comparación con la Línea Base
-
-```{r viz_comparacion}
-data.frame(
-  Modelo      = c("Baseline\n(sin información)", "Naive Bayes"),
-  Exactitud   = c(as.numeric(p_no_info), as.numeric(exactitud))
-) %>%
-  ggplot(aes(x = Modelo, y = Exactitud, fill = Modelo)) +
-  geom_col(width = 0.5, show.legend = FALSE) +
-  geom_text(aes(label = scales::percent(Exactitud, accuracy = 0.1)),
-            vjust = -0.5, size = 5) +
-  scale_fill_manual(values = c("#BDBDBD", "#1E88E5")) +
-  scale_y_continuous(labels = scales::percent, limits = c(0, 1)) +
-  labs(
-    title = "Exactitud: Naive Bayes vs. Baseline",
-    x = "",
-    y = "Exactitud"
-  ) +
-  theme_minimal(base_size = 13)
+```{r resumen_clas}
+cat("======= RESUMEN DE CLASIFICACIÓN (Naive Bayes) =======\n\n")
+cat(sprintf("Exactitud:              %.1f%%\n", exactitud_nb * 100))
+cat(sprintf("Kappa de Cohen:         %.4f\n", kappa_nb))
+cat(sprintf("Baseline:               %.1f%%\n", p_no_info_nb * 100))
+cat(sprintf("Mejora sobre baseline:  %.1f pp\n",
+            (exactitud_nb - p_no_info_nb) * 100))
 ```
 
----
+## 9.3 Conclusiones
 
-# 9. Conclusión Final
+**Actividades 1 y 2 — Regresión con Naive Bayes.** La estrategia de esperanza
+condicional produce un RMSE de \$`r round(rmse_nb, 2)` y un R² de
+`r round(r2_nb, 4)`. Las predicciones se comprimen en torno a los tres promedios por
+categoría, lo cual impide capturar la variabilidad intracategoría del precio. Este
+comportamiento no es un defecto del entrenamiento, sino una limitación inherente al uso
+de un clasificador como aproximación a un regresor.
 
-El modelo de **Naive Bayes** aplicado a la predicción categórica del precio de Airbnb
-en Austin muestra un desempeño **`r ifelse(exactitud > 0.5, "superior al azar", "limitado")`**,
-con una exactitud del `r round(exactitud * 100, 1)`% frente al `r round(p_no_info * 100, 1)`%
-del clasificador sin información.
+**Actividad 3 — Comparación de modelos de regresión.** Evaluando los cuatro algoritmos
+sobre la misma partición de datos, el ordenamiento de desempeño resultó ser Random
+Forest > Árbol de Regresión > Regresión Lineal > Naive Bayes. La brecha entre Random
+Forest y Naive Bayes es sustancial y se explica por la diferencia de naturaleza entre
+ambos: el primero fue diseñado para estimar funciones continuas con interacciones
+complejas, mientras que el segundo opera sobre categorías discretas sin modelar la
+estructura interna de cada clase.
 
-Las variables más informativas para el modelo son el **tipo de habitación** y la
-**capacidad**, que tienen una relación clara y directa con el precio. La categorización
-basada en cuartiles permitió construir clases balanceadas, lo que es una buena práctica
-para evitar sesgos hacia las clases mayoritarias.
+**Actividades 4 y 5 — Clasificación con Naive Bayes.** El clasificador alcanza una
+exactitud del `r round(exactitud_nb * 100, 1)`%, superando la línea base del
+`r round(p_no_info_nb * 100, 1)`% por un margen que resulta estadísticamente
+significativo según el intervalo de confianza reportado. El modelo aporta, por tanto,
+capacidad predictiva real y no trivial.
 
-Para mejorar el desempeño se recomendaría explorar modelos que no asuman independencia
-condicional (como árboles de decisión o Random Forest), los cuales pueden capturar
-interacciones entre variables como `bedrooms * bathrooms` que Naive Bayes no puede
-modelar directamente.
+**Actividad 6 — Análisis de la matriz de confusión.** La inspección detallada de los
+errores revela un patrón favorable para el caso de uso de SmartStay: la confusión se
+concentra entre categorías adyacentes y los errores de dos saltos (Económica↔Cara) son
+infrecuentes. La categoría Intermedia presenta el menor F1-Score, comportamiento
+coherente con lo observado en los árboles de clasificación del Laboratorio 4 y explicable
+por el solapamiento de perfiles en la zona media de la distribución de precios.
 
 ---
