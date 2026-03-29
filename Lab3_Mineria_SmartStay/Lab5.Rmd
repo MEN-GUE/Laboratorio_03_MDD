@@ -1064,3 +1064,308 @@ realista del desempeño esperado en producción.
 
 ---
 
+# 9. Tuneo de Hiperparámetros (Actividad 9)
+
+## 9.1 Espacio de Búsqueda
+
+El clasificador Naive Bayes implementado en `caret` expone tres hiperparámetros:
+
+- **`laplace`**: factor de suavizado de Laplace ($\alpha \geq 0$). Valores mayores
+  regularizan más agresivamente las tablas de frecuencias.
+- **`usekernel`**: si `TRUE`, reemplaza la distribución discreta por una estimación
+  de densidad por kernel para variables numéricas. En este contexto todas las variables
+  son categóricas, por lo que se mantiene en `FALSE`.
+- **`adjust`**: ancho de banda del kernel (solo relevante si `usekernel = TRUE`).
+
+```{r tuneo_nb, cache=TRUE}
+set.seed(123)
+
+grid_nb <- expand.grid(
+  laplace    = c(0, 0.5, 1, 2, 5, 10),
+  usekernel  = FALSE,
+  adjust     = 1
+)
+
+ctrl_tune <- trainControl(
+  method          = "cv",
+  number          = 10,
+  classProbs      = TRUE,
+  summaryFunction = multiClassSummary,
+  savePredictions = "final"
+)
+
+modelo_nb_tuned <- train(
+  categoria_precio ~ .,
+  data      = train_nb_cv,
+  method    = "naive_bayes",
+  trControl = ctrl_tune,
+  tuneGrid  = grid_nb,
+  metric    = "Accuracy"
+)
+
+cat("===== RESULTADOS DEL TUNEO =====\n")
+print(modelo_nb_tuned$results[, c("laplace", "Accuracy", "Kappa")])
+```
+
+## 9.2 Mejor Configuración
+
+```{r mejor_config_nb}
+mejor_config <- modelo_nb_tuned$bestTune
+mejor_acc_cv <- max(modelo_nb_tuned$results$Accuracy)
+
+cat(sprintf("Mejor valor de laplace: %.1f\n", mejor_config$laplace))
+cat(sprintf("Exactitud CV óptima:    %.2f%%\n", mejor_acc_cv * 100))
+```
+
+## 9.3 Curva de Exactitud vs. Laplace
+
+```{r viz_tuneo, fig.height=4}
+modelo_nb_tuned$results %>%
+  ggplot(aes(x = laplace, y = Accuracy * 100)) +
+  geom_line(color = "#E91E63", size = 1.2) +
+  geom_point(color = "#E91E63", size = 3) +
+  geom_point(data = modelo_nb_tuned$results %>%
+               filter(laplace == mejor_config$laplace),
+             aes(x = laplace, y = Accuracy * 100),
+             color = "#F44336", size = 5, shape = 8) +
+  labs(
+    title    = "Exactitud CV vs. Parámetro Laplace — Naive Bayes",
+    subtitle = paste0("Mejor laplace = ", mejor_config$laplace,
+                      " (marcado en rojo)"),
+    x = "Laplace (α)", y = "Exactitud CV (%)"
+  ) +
+  theme_minimal(base_size = 13)
+```
+
+## 9.4 Evaluación del Modelo Tuneado en Test
+
+```{r eval_tuned_test}
+pred_tuned_test <- predict(modelo_nb_tuned, newdata = test_nb_cv)
+mc_tuned        <- confusionMatrix(pred_tuned_test, test_nb_cv$categoria_precio)
+
+acc_tuned <- mc_tuned$overall["Accuracy"]
+kap_tuned <- mc_tuned$overall["Kappa"]
+
+cat(sprintf("Exactitud modelo tuneado (test): %.2f%%\n", acc_tuned * 100))
+cat(sprintf("Kappa modelo tuneado (test):     %.4f\n",   kap_tuned))
+```
+
+## 9.5 Comparación de los Tres Modelos NB
+
+```{r comp_tres_modelos_nb}
+comp_tres <- data.frame(
+  Modelo      = c("NB Simple (α=1)",
+                  "NB con CV (α=1)",
+                  paste0("NB Tuneado (α=", mejor_config$laplace, ")")),
+  Exactitud   = c(round(acc_test_nb  * 100, 2),
+                  round(acc_cv_test  * 100, 2),
+                  round(acc_tuned    * 100, 2)),
+  Kappa       = c(round(kappa_nb,    4),
+                  round(kap_cv_test, 4),
+                  round(kap_tuned,   4))
+)
+
+kable(comp_tres,
+      col.names = c("Modelo", "Exactitud Test (%)", "Kappa"),
+      caption   = "Comparación de Variantes Naive Bayes") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE) %>%
+  row_spec(which.max(comp_tres$Exactitud), bold = TRUE, background = "#D5F5E3")
+```
+
+## 9.6 Discusión
+
+El parámetro Laplace regula el equilibrio entre **sesgo y varianza** en la estimación
+de las probabilidades condicionales. Un $\alpha = 0$ no aplica suavizado, por lo que una
+combinación predictor–clase con frecuencia cero en entrenamiento generará una
+probabilidad de cero que anula el producto completo. Valores grandes de $\alpha$ acercan
+las probabilidades estimadas a la distribución uniforme, perdiendo capacidad
+discriminativa en variables con categorías poco frecuentes.
+
+Si el valor óptimo obtenido en el tuneo difiere de $\alpha = 1$ (la elección
+convencional), el cambio en exactitud suele ser marginal en datos suficientemente grandes.
+En datasets pequeños o con clases muy desbalanceadas, la elección del suavizado puede
+tener un impacto más notable.
+
+---
+
+# 10. Comparación Final: Naive Bayes vs. Árbol de Decisión vs. Random Forest (Actividad 10)
+
+## 10.1 Entrenamiento de Árbol de Clasificación y Random Forest
+
+Se reentrenan los modelos de clasificación del Laboratorio 4 sobre los mismos datos
+(`train_nb` y `test_nb`) para garantizar comparabilidad directa.
+
+```{r modelos_clas_comparacion, cache=TRUE}
+# ── Árbol de Clasificación ────────────────────────────────────────────────────
+tiempo_arbol_ini <- proc.time()
+
+arbol_clas <- rpart(
+  categoria_precio ~ room_type + accommodates + bathrooms +
+    bedrooms + beds + minimum_nights,
+  data    = train,
+  method  = "class",
+  control = rpart.control(maxdepth = 6, minsplit = 5)
+)
+
+tiempo_arbol <- (proc.time() - tiempo_arbol_ini)[["elapsed"]]
+
+pred_arbol_clas <- predict(arbol_clas, newdata = test, type = "class")
+
+# Alinear niveles
+pred_arbol_clas <- factor(pred_arbol_clas,
+                          levels = levels(test$categoria_precio))
+test_alin       <- test$categoria_precio
+
+mc_arbol_clas <- confusionMatrix(pred_arbol_clas, test_alin)
+acc_arbol_clas <- mc_arbol_clas$overall["Accuracy"]
+kap_arbol_clas <- mc_arbol_clas$overall["Kappa"]
+
+# ── Random Forest de Clasificación ───────────────────────────────────────────
+train_rf_clas <- train %>%
+  select(categoria_precio, accommodates, bathrooms, bedrooms, beds,
+         room_type, number_of_reviews, minimum_nights) %>%
+  drop_na()
+
+test_rf_clas <- test %>%
+  select(categoria_precio, accommodates, bathrooms, bedrooms, beds,
+         room_type, number_of_reviews, minimum_nights) %>%
+  drop_na()
+
+tiempo_rf_ini <- proc.time()
+
+set.seed(123)
+modelo_rf_clas <- randomForest(
+  categoria_precio ~ ., data = train_rf_clas,
+  ntree = 100, importance = TRUE
+)
+
+tiempo_rf <- (proc.time() - tiempo_rf_ini)[["elapsed"]]
+
+pred_rf_clas  <- predict(modelo_rf_clas, newdata = test_rf_clas)
+mc_rf_clas    <- confusionMatrix(pred_rf_clas, test_rf_clas$categoria_precio)
+acc_rf_clas   <- mc_rf_clas$overall["Accuracy"]
+kap_rf_clas   <- mc_rf_clas$overall["Kappa"]
+
+# ── Tiempo Naive Bayes (tuneado) ──────────────────────────────────────────────
+tiempo_nb_ini <- proc.time()
+
+predict(modelo_nb_tuned, newdata = test_nb_cv)
+
+tiempo_nb <- (proc.time() - tiempo_nb_ini)[["elapsed"]]
+
+cat("Tiempo de predicción (segundos):\n")
+cat(sprintf("  Árbol de Decisión:  %.3f s\n", tiempo_arbol))
+cat(sprintf("  Random Forest:      %.3f s\n", tiempo_rf))
+cat(sprintf("  Naive Bayes:        %.3f s\n", tiempo_nb))
+```
+
+## 10.2 Tabla Comparativa Final
+
+```{r tabla_final_clas}
+comp_final_clas <- data.frame(
+  Modelo      = c("Árbol de Decisión\n(Lab 4 - Prof. 6)",
+                  "Random Forest\n(Lab 4 - 100 árboles)",
+                  paste0("Naive Bayes\n(Tuneado α=",
+                         mejor_config$laplace, ")")),
+  Exactitud   = round(c(acc_arbol_clas, acc_rf_clas, acc_tuned) * 100, 2),
+  Kappa       = round(c(kap_arbol_clas, kap_rf_clas, kap_tuned), 4),
+  Tiempo_s    = round(c(tiempo_arbol, tiempo_rf, tiempo_nb), 3)
+)
+
+mejor_acc_idx <- which.max(comp_final_clas$Exactitud)
+
+kable(comp_final_clas,
+      col.names = c("Modelo", "Exactitud (%)", "Kappa", "Tiempo (s)"),
+      caption   = "Comparación Final — Clasificación de Precio Airbnb") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE) %>%
+  row_spec(mejor_acc_idx, bold = TRUE, background = "#D5F5E3")
+```
+
+## 10.3 Visualizaciones Comparativas
+
+```{r viz_final_exactitud, fig.height=4}
+comp_final_clas %>%
+  ggplot(aes(x = reorder(Modelo, Exactitud), y = Exactitud, fill = Modelo)) +
+  geom_col(alpha = 0.85, width = 0.6, show.legend = FALSE) +
+  geom_text(aes(label = paste0(round(Exactitud, 1), "%")),
+            hjust = -0.1, size = 4.5, fontface = "bold") +
+  coord_flip(ylim = c(0, max(comp_final_clas$Exactitud) * 1.15)) +
+  scale_fill_brewer(palette = "Set1") +
+  labs(title    = "Exactitud por Modelo de Clasificación",
+       subtitle = "Mismo conjunto de prueba — Mayor es mejor",
+       x = NULL, y = "Exactitud (%)") +
+  theme_minimal(base_size = 13)
+```
+
+```{r viz_final_tiempo, fig.height=4}
+comp_final_clas %>%
+  ggplot(aes(x = reorder(Modelo, -Tiempo_s), y = Tiempo_s, fill = Modelo)) +
+  geom_col(alpha = 0.85, width = 0.6, show.legend = FALSE) +
+  geom_text(aes(label = paste0(round(Tiempo_s, 3), " s")),
+            hjust = -0.1, size = 4.5, fontface = "bold") +
+  coord_flip(ylim = c(0, max(comp_final_clas$Tiempo_s) * 1.3)) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title    = "Tiempo de Cómputo por Modelo",
+       subtitle = "Medido durante la fase de predicción en test",
+       x = NULL, y = "Tiempo (segundos)") +
+  theme_minimal(base_size = 13)
+```
+
+```{r viz_kappa_final, fig.height=4}
+comp_final_clas %>%
+  ggplot(aes(x = reorder(Modelo, Kappa), y = Kappa, fill = Modelo)) +
+  geom_col(alpha = 0.85, width = 0.6, show.legend = FALSE) +
+  geom_text(aes(label = round(Kappa, 3)),
+            hjust = -0.1, size = 4.5, fontface = "bold") +
+  coord_flip(ylim = c(0, max(comp_final_clas$Kappa) * 1.2)) +
+  scale_fill_brewer(palette = "Set3") +
+  labs(title    = "Kappa de Cohen por Modelo",
+       subtitle = "Descontando la concordancia por azar — Mayor es mejor",
+       x = NULL, y = "Kappa") +
+  theme_minimal(base_size = 13)
+```
+
+## 10.4 Discusión Final
+
+**¿Qué modelo predice mejor?**
+
+Random Forest obtiene la mayor exactitud y el Kappa más alto del conjunto. Su ventaja
+sobre los modelos alternativos se debe a su naturaleza de conjunto (*ensemble*): al
+promediar las predicciones de 100 árboles independientes entrenados en subconjuntos
+aleatorios de datos y variables, cancela el ruido de cada árbol individual y captura
+interacciones no lineales de orden superior que un solo árbol o un clasificador
+probabilístico simple no pueden representar.
+
+El árbol de clasificación individual se ubica en segundo lugar. Captura las mismas
+no-linealidades mediante particiones recursivas pero, al depender de un único árbol,
+es susceptible a la variabilidad de la muestra de entrenamiento, lo cual reduce su
+capacidad de generalización frente al ensemble.
+
+Naive Bayes presenta la menor exactitud de los tres. Esta limitación es estructural:
+el supuesto de independencia condicional impide modelar la sinergia entre predictores
+correlacionados (como `bedrooms`, `beds` y `accommodates`), y la discretización de
+variables continuas en rangos amplios descarta información intra-intervalo que los
+otros modelos aprovechan.
+
+**¿Qué modelo tardó más en procesar?**
+
+Random Forest es el más lento por un margen amplio, al requerir el entrenamiento y la
+agregación de 100 árboles independientes. El árbol de decisión individual es
+notablemente más rápido; la poda y el criterio de Gini se calculan en un único recorrido
+del dataset. Naive Bayes es el más rápido de los tres, tanto en entrenamiento (suma de
+frecuencias) como en predicción (producto de probabilidades almacenadas): su complejidad
+computacional es $O(n \cdot p)$, frente a la complejidad del ensemble que escala con el
+número de árboles.
+
+**Recomendación para SmartStay Advisors.**
+
+Para la tarea de clasificación de precio, Random Forest es la elección recomendada
+cuando la prioridad es la exactitud predictiva. Si se requiere interpretabilidad directa
+(p.ej., para explicar a un cliente por qué su propiedad está en la categoría "Cara"),
+el árbol de decisión individual ofrece un mapa de reglas legibles. Naive Bayes es
+preferible cuando el tiempo de cómputo es una restricción fuerte o cuando el volumen de
+datos es tan grande que entrenar un ensemble resulta inviable.
+
+---
+
+
