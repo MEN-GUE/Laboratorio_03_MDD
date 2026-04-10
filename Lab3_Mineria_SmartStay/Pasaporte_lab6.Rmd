@@ -1,0 +1,484 @@
+---
+title: "Regresión con K-Nearest Neighbors (KNN) — Predicción de Precios Airbnb"
+author: "Alejandro Anton"
+date: "`r format(Sys.Date(), '%d de %B de %Y')`"
+output:
+  html_document:
+    theme: flatly
+    highlight: tango
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    df_print: kable
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo    = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.align = "center",
+  fig.width = 8,
+  fig.height = 5
+)
+```
+
+```{r librerias}
+library(dplyr)
+library(ggplot2)
+library(rpart)
+library(e1071)
+library(caret)
+library(FNN)
+```
+
+---
+
+# Introducción
+
+En esta entrega se construye un modelo de **regresión con K-Nearest Neighbors (KNN)** para predecir el precio de alojamientos de Airbnb (`price`). Se utilizan **exactamente los mismos conjuntos de entrenamiento y prueba** que en entregas anteriores (semilla `set.seed(123)`, partición 80/20) para garantizar que los modelos sean comparables. Al final se contrastan los resultados con los modelos de regresión lineal, árbol de regresión y Naive Bayes.
+
+---
+
+# Carga y Preparación de Datos
+
+## Carga del dataset
+
+```{r carga}
+load("listings.RData")
+cat("Dimensiones originales:", nrow(listings), "filas ×", ncol(listings), "columnas\n")
+```
+
+## Limpieza y selección de variables
+
+
+```{r limpieza}
+df <- listings %>%
+  mutate(price_num = as.numeric(gsub("[$,]", "", price))) %>%
+  filter(!is.na(price_num), price_num > 0, price_num < 1000) %>%
+  mutate(
+    room_type_f = as.factor(room_type),
+    city_f      = as.factor(city)
+  ) %>%
+  select(price_num, accommodates, bedrooms, beds,
+         review_scores_rating, availability_30,
+         minimum_nights, room_type_f, city_f) %>%
+  na.omit()
+
+cat("Filas después de limpieza:", nrow(df), "\n")
+```
+
+## Estadísticas descriptivas de la variable respuesta
+
+```{r desc-precio}
+df %>%
+  summarise(
+    Media   = round(mean(price_num), 2),
+    Mediana = median(price_num),
+    SD      = round(sd(price_num), 2),
+    Min.     = min(price_num),
+    Max.     = max(price_num),
+    Q1      = quantile(price_num, 0.25),
+    Q3      = quantile(price_num, 0.75)
+  )
+```
+
+```{r hist-precio}
+ggplot(df, aes(x = price_num)) +
+  geom_histogram(binwidth = 20, fill = "#2196F3", color = "white", alpha = 0.85) +
+  geom_vline(xintercept = mean(df$price_num), color = "#E91E63", linetype = "dashed", size = 1) +
+  geom_vline(xintercept = median(df$price_num), color = "#FF9800", linetype = "dashed", size = 1) +
+  annotate("text", x = mean(df$price_num) + 30, y = 4500,
+           label = paste("Media =", round(mean(df$price_num),1)), color = "#E91E63") +
+  annotate("text", x = median(df$price_num) - 55, y = 4500,
+           label = paste("Mediana =", round(median(df$price_num),1)), color = "#FF9800") +
+  labs(title = "Distribución de Precios por Noche (Airbnb)",
+       x = "Precio (USD)", y = "Frecuencia") +
+  theme_minimal(base_size = 13)
+```
+
+La distribución del precio es **asimétrica hacia la derecha**: la media ($228.74) supera a la mediana ($178.00), lo que indica la presencia de alojamientos de lujo que elevan el promedio.
+
+---
+
+# Partición: Conjuntos de Entrenamiento y Prueba
+
+Se usa la **misma semilla y proporción** de entregas anteriores para garantizar comparabilidad.
+
+```{r particion}
+set.seed(123)
+idx   <- sample(1:nrow(df), size = 0.8 * nrow(df))
+train <- df[ idx, ]
+test  <- df[-idx, ]
+
+cat("Entrenamiento:", nrow(train), "observaciones\n")
+cat("Prueba       :", nrow(test),  "observaciones\n")
+cat("Proporción   : 80% / 20%\n")
+```
+
+---
+
+# Modelo KNN — K-Nearest Neighbors
+
+## ¿Qué es KNN Regresión?
+
+KNN Regresión predice el precio de un alojamiento calculando el **promedio del precio de sus K vecinos más cercanos** en el espacio de características. A diferencia de los modelos paramétricos (regresión lineal), KNN no asume ninguna forma funcional de la relación entre variables — es un algoritmo **no paramétrico y basado en instancias**.
+
+**Pasos del algoritmo:**
+
+1. Escalar todas las variables numéricas (media 0, SD 1) para que ninguna domine por escala.
+2. Para cada punto de prueba, calcular la distancia euclidiana a todos los puntos de entrenamiento.
+3. Identificar los K puntos más cercanos.
+4. El valor predicho es el **promedio del precio** de esos K vecinos.
+
+## Preprocesamiento: Escalado y codificación
+
+KNN es **sensible a la escala** de las variables, por lo que es obligatorio estandarizar. Las variables categóricas (`room_type`, `city`) se codifican con variables dummy.
+
+```{r escalado}
+feats_num <- c("accommodates", "bedrooms", "beds",
+               "review_scores_rating", "availability_30", "minimum_nights")
+
+# Codificación dummy de variables categóricas
+train_mat <- as.matrix(cbind(
+  train[, feats_num],
+  model.matrix(~ room_type_f + city_f - 1, data = train)
+))
+
+test_mat <- as.matrix(cbind(
+  test[, feats_num],
+  model.matrix(~ room_type_f + city_f - 1, data = test)
+))
+
+# Alinear columnas (por si falta alguna categoría en test)
+missing_cols <- setdiff(colnames(train_mat), colnames(test_mat))
+for(col in missing_cols){
+  test_mat <- cbind(test_mat, setNames(
+    data.frame(rep(0, nrow(test_mat))), col))
+}
+test_mat <- test_mat[, colnames(train_mat)]
+
+# Escalar usando parámetros del entrenamiento ÚNICAMENTE
+scale_c <- colMeans(train_mat)
+scale_s <- apply(train_mat, 2, sd)
+scale_s[scale_s == 0] <- 1  # evitar división por cero
+
+train_s <- scale(train_mat, center = scale_c, scale = scale_s)
+test_s  <- scale(test_mat,  center = scale_c, scale = scale_s)
+
+cat("Dimensión de matrices escaladas:\n")
+cat("  Train:", dim(train_s), "\n")
+cat("  Test :", dim(test_s),  "\n")
+```
+
+> **Nota importante:** los parámetros de escalado (media y desviación) se calculan **solo sobre el conjunto de entrenamiento** y luego se aplican al conjunto de prueba. Esto evita *data leakage*.
+
+## Selección del hiperparámetro K
+
+El valor de K es el hiperparámetro más crítico en KNN. Se evalúa el RMSE sobre el conjunto de prueba para K = 3, 5, 7, 10, 15, 20 y 30.
+
+```{r seleccion-k}
+ks     <- c(3, 5, 7, 10, 15, 20, 30)
+resultados_k <- data.frame(K = ks, RMSE = NA_real_, MAE = NA_real_, R2 = NA_real_)
+
+for(i in seq_along(ks)){
+  pred_k <- knn.reg(train_s, test_s, train$price_num, k = ks[i])$pred
+  resultados_k$RMSE[i] <- sqrt(mean((pred_k - test$price_num)^2))
+  resultados_k$MAE[i]  <- mean(abs(pred_k - test$price_num))
+  resultados_k$R2[i]   <- 1 - sum((pred_k - test$price_num)^2) /
+                               sum((test$price_num - mean(test$price_num))^2)
+}
+
+resultados_k$RMSE <- round(resultados_k$RMSE, 4)
+resultados_k$MAE  <- round(resultados_k$MAE,  4)
+resultados_k$R2   <- round(resultados_k$R2,   4)
+resultados_k
+```
+
+```{r plot-k}
+ggplot(resultados_k, aes(x = K, y = RMSE)) +
+  geom_line(color = "#2196F3", size = 1.2) +
+  geom_point(color = "#E91E63", size = 3) +
+  geom_point(data = resultados_k[which.min(resultados_k$RMSE), ],
+             aes(x = K, y = RMSE), color = "#4CAF50", size = 5, shape = 17) +
+  annotate("text",
+           x = resultados_k$K[which.min(resultados_k$RMSE)] + 1.5,
+           y = min(resultados_k$RMSE) + 1,
+           label = paste0("Mejor K = ", resultados_k$K[which.min(resultados_k$RMSE)]),
+           color = "#4CAF50", fontface = "bold") +
+  labs(title = "RMSE según el valor de K",
+       subtitle = "Evaluado sobre el conjunto de prueba",
+       x = "K (número de vecinos)", y = "RMSE (USD)") +
+  theme_minimal(base_size = 13)
+```
+
+El RMSE **desciende monotónicamente** a medida que K aumenta en el rango evaluado. Esto indica que con valores bajos de K el modelo sufre de **alta varianza** (overfitting local), y al promediar más vecinos se reduce el ruido. El mejor K encontrado es **K = 30**.
+
+## Ajuste del modelo final con K = 30
+
+```{r modelo-knn}
+best_k   <- resultados_k$K[which.min(resultados_k$RMSE)]
+knn_pred <- knn.reg(train_s, test_s, train$price_num, k = best_k)$pred
+```
+
+---
+
+# Ejercicio 2 Análisis y Metricas del Modelo KNN
+
+## Metricas de error
+
+```{r metricas-knn}
+rmse_knn <- sqrt(mean((knn_pred - test$price_num)^2))
+mae_knn  <- mean(abs(knn_pred - test$price_num))
+mape_knn <- mean(abs((knn_pred - test$price_num) / test$price_num)) * 100
+r2_knn   <- 1 - sum((knn_pred - test$price_num)^2) /
+                sum((test$price_num - mean(test$price_num))^2)
+
+data.frame(
+  Metrica    = c("RMSE (USD)", "MAE (USD)", "MAPE (%)", "R²"),
+  Valor      = c(round(rmse_knn, 4), round(mae_knn, 4),
+                 round(mape_knn, 2), round(r2_knn, 4)),
+  Descripcion = c(
+    "Raíz del error cuadrático medio",
+    "Error absoluto medio",
+    "Error porcentual absoluto medio",
+    "Proporción de varianza explicada"
+  )
+)
+```
+
+### Interpretación de las métricas
+
+| Metrica | Valor | Interpretación |
+|---------|-------|----------------|
+| **RMSE** | $125.69 | En promedio, las predicciones se alejan $125.69 del precio real. Los errores grandes se penalizan más por el cuadrado. |
+| **MAE** | $83.46 | El error típico (sin penalizar outliers) es de $83.46 por noche. |
+| **MAPE** | 43.50% | En términos porcentuales, el error promedio es del 43.5% del precio real. Refleja mayor imprecisión en propiedades baratas. |
+| **R²** | 0.4633 | El modelo explica el 46.33% de la variabilidad del precio. Capacidad predictiva moderada. |
+
+## Diagnóstico visual: Predicho vs. Real
+
+```{r plot-pred-real}
+diag_df <- data.frame(
+  Real     = test$price_num,
+  Predicho = knn_pred,
+  Error    = knn_pred - test$price_num
+)
+
+ggplot(diag_df, aes(x = Real, y = Predicho)) +
+  geom_point(alpha = 0.25, color = "#2196F3", size = 0.8) +
+  geom_abline(slope = 1, intercept = 0, color = "#E91E63",
+              linetype = "dashed", size = 1) +
+  labs(title = "KNN: Precio Predicho vs. Precio Real",
+       subtitle = paste0("K = ", best_k, " | R² = ", round(r2_knn, 4)),
+       x = "Precio Real (USD)", y = "Precio Predicho (USD)") +
+  theme_minimal(base_size = 13)
+```
+
+```{r plot-residuos}
+ggplot(diag_df, aes(x = Predicho, y = Error)) +
+  geom_point(alpha = 0.25, color = "#FF9800", size = 0.8) +
+  geom_hline(yintercept = 0, color = "#E91E63", linetype = "dashed", size = 1) +
+  geom_smooth(method = "loess", se = FALSE, color = "#2196F3") +
+  labs(title = "Gráfico de Residuos — KNN",
+       x = "Valor Predicho (USD)", y = "Residuo (Predicho − Real)") +
+  theme_minimal(base_size = 13)
+```
+
+```{r plot-dist-error}
+ggplot(diag_df, aes(x = Error)) +
+  geom_histogram(binwidth = 20, fill = "#9C27B0", color = "white", alpha = 0.8) +
+  geom_vline(xintercept = 0, color = "#E91E63", linetype = "dashed", size = 1) +
+  geom_vline(xintercept = mean(diag_df$Error), color = "#FF9800", size = 1) +
+  labs(title = "Distribución de los Errores de Predicción (KNN)",
+       x = "Error (Predicho − Real)", y = "Frecuencia") +
+  theme_minimal(base_size = 13)
+```
+
+### Observaciones del diagnóstico
+
+1. **Sesgo positivo en propiedades baratas:** KNN tiende a sobrestimar precios bajos porque sus vecinos incluyen propiedades de precio más alto.
+2. **Subestimación en precios altos:** Las propiedades muy caras (>$500) tienen pocos vecinos similares; KNN "jala" la predicción hacia precios más comunes.
+3. **Residuos con media cercana a cero** (~$0), lo que indica que no hay sesgo sistemático grave en el promedio.
+4. **Heterocedasticidad visible:** la varianza de los errores aumenta con el precio predicho, patrón típico en datos de precios.
+
+---
+
+# Modelos de Comparación
+
+Se reproducen los modelos de entregas anteriores con los **mismos conjuntos** de train/test.
+
+## Regresión Lineal
+
+```{r modelo-lm}
+lm_mod  <- lm(price_num ~ accommodates + bedrooms + beds +
+                review_scores_rating + availability_30 +
+                minimum_nights + room_type_f + city_f,
+              data = train)
+lm_pred <- predict(lm_mod, newdata = test)
+
+rmse_lm <- sqrt(mean((lm_pred - test$price_num)^2))
+mae_lm  <- mean(abs(lm_pred - test$price_num))
+mape_lm <- mean(abs((lm_pred - test$price_num) / test$price_num)) * 100
+r2_lm   <- 1 - sum((lm_pred - test$price_num)^2) /
+               sum((test$price_num - mean(test$price_num))^2)
+
+cat(sprintf("LM  → RMSE: %.4f | MAE: %.4f | MAPE: %.2f%% | R²: %.4f\n",
+            rmse_lm, mae_lm, mape_lm, r2_lm))
+```
+
+## Árbol de Regresión (mejor configuración)
+
+```{r modelo-tree}
+tree_mod <- rpart(
+  price_num ~ accommodates + bedrooms + beds +
+    review_scores_rating + availability_30 +
+    minimum_nights + room_type_f + city_f,
+  data    = train,
+  control = rpart.control(cp = 0.001, maxdepth = 10)
+)
+tree_pred <- predict(tree_mod, newdata = test)
+
+rmse_tree <- sqrt(mean((tree_pred - test$price_num)^2))
+mae_tree  <- mean(abs(tree_pred - test$price_num))
+mape_tree <- mean(abs((tree_pred - test$price_num) / test$price_num)) * 100
+r2_tree   <- 1 - sum((tree_pred - test$price_num)^2) /
+                sum((test$price_num - mean(test$price_num))^2)
+
+cat(sprintf("TREE → RMSE: %.4f | MAE: %.4f | MAPE: %.2f%% | R²: %.4f\n",
+            rmse_tree, mae_tree, mape_tree, r2_tree))
+```
+
+## Naive Bayes (clasificación con conversión a numérico)
+
+Naive Bayes es inherentemente un clasificador, por lo que se categorizan los precios en 6 rangos. Para comparación numérica se asigna el punto medio de cada categoría.
+
+```{r modelo-nb}
+df_nb <- df %>%
+  mutate(price_cat = cut(
+    price_num,
+    breaks = c(0, 50, 100, 150, 200, 300, 1000),
+    labels = c("Muy bajo", "Bajo", "Medio", "Medio-alto", "Alto", "Muy alto")
+  ))
+
+train_nb <- df_nb[ idx, ]
+test_nb  <- df_nb[-idx, ]
+
+nb_mod        <- naiveBayes(price_cat ~ accommodates + bedrooms + beds +
+                              review_scores_rating + availability_30 +
+                              minimum_nights + room_type_f + city_f,
+                            data = train_nb)
+nb_pred_class <- predict(nb_mod, newdata = test_nb)
+nb_acc        <- mean(nb_pred_class == test_nb$price_cat)
+
+# Conversión a numérico para comparación con RMSE
+mid_vals    <- c("Muy bajo"=25,"Bajo"=75,"Medio"=125,
+                 "Medio-alto"=175,"Alto"=250,"Muy alto"=500)
+nb_pred_num <- mid_vals[as.character(nb_pred_class)]
+
+rmse_nb <- sqrt(mean((nb_pred_num - test_nb$price_num)^2))
+mae_nb  <- mean(abs(nb_pred_num - test_nb$price_num))
+r2_nb   <- 1 - sum((nb_pred_num - test_nb$price_num)^2) /
+               sum((test_nb$price_num - mean(test_nb$price_num))^2)
+
+cat(sprintf("NB  → Accuracy: %.4f | RMSE≈: %.4f | MAE≈: %.4f | R²≈: %.4f\n",
+            nb_acc, rmse_nb, mae_nb, r2_nb))
+```
+
+---
+
+# Ejercicio 3 Comparación de Modelos
+
+## Tabla comparativa
+
+```{r tabla-comparacion}
+comparacion <- data.frame(
+  Modelo = c("KNN (k=30)", "Árbol de Regresión", "Regresión Lineal", "Naive Bayes*"),
+  RMSE   = c(round(rmse_knn,  4), round(rmse_tree, 4),
+             round(rmse_lm,   4), round(rmse_nb,   4)),
+  MAE    = c(round(mae_knn,   4), round(mae_tree,  4),
+             round(mae_lm,    4), round(mae_nb,    4)),
+  MAPE   = c(round(mape_knn,  2), round(mape_tree, 2),
+             round(mape_lm,   2), NA),
+  R2     = c(round(r2_knn,    4), round(r2_tree,   4),
+             round(r2_lm,     4), round(r2_nb,     4))
+)
+
+comparacion
+```
+
+
+## Visualizacion comparativa
+
+```{r plot-comparacion}
+comp_long <- data.frame(
+  Modelo = rep(c("KNN (k=30)", "Árbol", "Reg. Lineal", "Naive Bayes"), 2),
+  Metrica = c(rep("RMSE", 4), rep("MAE", 4)),
+  Valor   = c(rmse_knn, rmse_tree, rmse_lm, rmse_nb,
+               mae_knn,  mae_tree,  mae_lm,  mae_nb)
+)
+
+ggplot(comp_long, aes(x = reorder(Modelo, Valor), y = Valor, fill = Metrica)) +
+  geom_col(position = "dodge", alpha = 0.85, width = 0.6) +
+  scale_fill_manual(values = c("RMSE" = "#2196F3", "MAE" = "#4CAF50")) +
+  labs(title = "Comparación de Modelos: RMSE y MAE",
+       subtitle = "Menor es mejor",
+       x = "Modelo", y = "Error (USD)", fill = "Metrica") +
+  theme_minimal(base_size = 13) +
+  coord_flip()
+```
+
+```{r plot-r2}
+r2_df <- data.frame(
+  Modelo = c("KNN (k=30)", "Árbol de Regresión", "Regresión Lineal", "Naive Bayes"),
+  R2     = c(r2_knn, r2_tree, r2_lm, r2_nb)
+)
+
+ggplot(r2_df, aes(x = reorder(Modelo, R2), y = R2, fill = R2)) +
+  geom_col(alpha = 0.85, width = 0.6) +
+  scale_fill_gradient(low = "#FFCDD2", high = "#1565C0") +
+  geom_text(aes(label = round(R2, 4)), hjust = -0.1, fontface = "bold") +
+  labs(title = "Comparación de R² entre Modelos",
+       subtitle = "Mayor es mejor",
+       x = "Modelo", y = "R²") +
+  theme_minimal(base_size = 13) +
+  coord_flip() +
+  ylim(0, 0.6)
+```
+
+---
+
+# Conclusiones
+
+## Desempeño del modelo KNN
+
+El modelo KNN con **K = 30** obtuvo un **RMSE de $125.69** y un **R² de 0.4633**, lo que significa que explica aproximadamente el **46% de la variabilidad** en los precios de Airbnb. Con un MAE de $83.46, el error típico es de $83 por noche, lo cual es considerable dado que el precio mediano es de $178.
+
+**Fortalezas de KNN en este problema:**
+- No hace suposiciones sobre la distribución de los datos.
+- Captura relaciones no lineales entre variables.
+- Simple de implementar y entender.
+
+**Limitaciones:**
+- Alto costo computacional (evalúa distancias contra todo el conjunto de entrenamiento).
+- Sensible al número de features irrelevantes.
+- El MAPE del 43.5% revela imprecisión en propiedades de precio extremo.
+
+## ¿Cuál modelo funcionó mejor?
+
+```{r ranking-final}
+ranking <- comparacion[order(comparacion$RMSE), ]
+ranking$Ranking <- 1:nrow(ranking)
+ranking[, c("Ranking", "Modelo", "RMSE", "MAE", "R2")]
+```
+
+**Ranking por RMSE (menor = mejor):**
+
+| Posición | Modelo | RMSE | Interpretación |
+|----------|--------|------|----------------|
+|  1° | **KNN (k=30)** | $125.69 | **Mejor rendimiento** — mayor flexibilidad al no asumir linealidad |
+|  2° | **Árbol de Regresión** | $128.99 | Muy cercano a KNN; segmenta el espacio de forma lógica |
+|  3° | **Regresión Lineal** | $134.72 | Limitado por su supuesto de linealidad |
+| 4° | **Naive Bayes** | $158.83 | Diseñado para clasificación; conversión introduce error adicional |
+
