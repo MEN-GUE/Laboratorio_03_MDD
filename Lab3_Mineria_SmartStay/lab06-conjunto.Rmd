@@ -1,0 +1,150 @@
+---
+title: "Laboratorio 6 — K Nearest Neighbors (KNN)"
+subtitle: "CC3074 — Minería de Datos | SmartStay Advisors"
+author: "Grupo de Consultoría: Alejandro Anton, Jose Anton, Juan Fernando Menendez, Fernando Mendoza"
+date: "`r Sys.Date()`"
+output:
+  pdf_document:
+    toc: true
+    number_sections: true
+  html_document:
+    toc: true
+    theme: flatly
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+library(dplyr)
+library(ggplot2)
+library(rpart)
+library(e1071)
+library(caret)
+library(FNN)
+library(randomForest)
+```
+
+```{r preparar datos}
+load("listings.RData")
+
+df <- listings %>%
+  mutate(price_num = as.numeric(gsub("[$,]", "", price))) %>%
+  filter(!is.na(price_num), price_num > 0, price_num < 1000) %>%
+  mutate(
+    room_type_f = as.factor(room_type),
+    city_f      = as.factor(city)
+  ) %>%
+  select(price_num, accommodates, bedrooms, beds,
+         review_scores_rating, availability_30,
+         minimum_nights, room_type_f, city_f) %>%
+  na.omit()
+
+set.seed(123)
+idx   <- sample(1:nrow(df), size = 0.8 * nrow(df))
+train <- df[ idx, ]
+test  <- df[-idx, ]
+```
+
+# Actividad 1: Modelo de regresión usando KNN
+```{r}
+feats_num <- c("accommodates", "bedrooms", "beds",
+               "review_scores_rating", "availability_30", "minimum_nights")
+
+train_mat <- as.matrix(cbind(train[, feats_num], model.matrix(~ room_type_f + city_f - 1, data = train)))
+test_mat <- as.matrix(cbind(test[, feats_num], model.matrix(~ room_type_f + city_f - 1, data = test)))
+
+# Alinear columnas de test
+missing_cols <- setdiff(colnames(train_mat), colnames(test_mat))
+for(col in missing_cols) test_mat <- cbind(test_mat, setNames(data.frame(rep(0, nrow(test_mat))), col))
+test_mat <- test_mat[, colnames(train_mat)]
+
+scale_c <- colMeans(train_mat)
+scale_s <- apply(train_mat, 2, sd)
+scale_s[scale_s == 0] <- 1
+
+train_s <- scale(train_mat, center = scale_c, scale = scale_s)
+test_s  <- scale(test_mat,  center = scale_c, scale = scale_s)
+
+# Predicción usando k=30 (determinado en pruebas previas)
+k_reg <- 30
+knn_pred_reg <- knn.reg(train_s, test_s, train$price_num, k = k_reg)$pred
+```
+El modelo KNN de regresión requiere que todas las distancias estén en la misma escala, de lo contrario, variables con rangos más amplios (como minimum_nights) dominarían el cálculo de similitud entre las propiedades. El escalado se aplicó correctamente basándonos únicamente en el set de entrenamiento.
+
+# Actividad 2: Análisis de resultados del modelo de regresión
+```{r}
+rmse_knn <- sqrt(mean((knn_pred_reg - test$price_num)^2))
+mae_knn  <- mean(abs(knn_pred_reg - test$price_num))
+r2_knn   <- 1 - sum((knn_pred_reg - test$price_num)^2) / sum((test$price_num - mean(test$price_num))^2)
+
+cat(sprintf("KNN (k=30) -> RMSE: %.2f | MAE: %.2f | R2: %.4f\n", rmse_knn, mae_knn, r2_knn))
+```
+El modelo KNN tiene un error promedio cuadrático (RMSE) de $125.69. Aunque logra capturar la tendencia general de los precios (explicando cerca del 46% de la varianza con su R2), le cuesta predecir con exactitud las propiedades atípicas o extremadamente caras, ya que tiende a promediar los precios de sus vecinos, suavizando los picos.
+
+# Actividad 3: Comparación con modelos de regresión anteriores
+```{r}
+# Regresión Lineal
+lm_mod  <- lm(price_num ~ ., data = train)
+lm_pred <- predict(lm_mod, newdata = test)
+rmse_lm <- sqrt(mean((lm_pred - test$price_num)^2))
+
+# Árbol de Regresión
+tree_mod <- rpart(price_num ~ ., data = train, control = rpart.control(cp = 0.001))
+tree_pred <- predict(tree_mod, newdata = test)
+rmse_tree <- sqrt(mean((tree_pred - test$price_num)^2))
+
+# Naive Bayes 
+df_nb <- df %>% mutate(price_cat = cut(price_num, breaks=c(0,50,100,150,200,300,1000), labels=c(25,75,125,175,250,500)))
+nb_mod <- naiveBayes(price_cat ~ ., data = df_nb[idx, ])
+nb_pred <- as.numeric(as.character(predict(nb_mod, newdata = df_nb[-idx, ])))
+rmse_nb <- sqrt(mean((nb_pred - test$price_num)^2))
+
+resultados_reg <- data.frame(
+  Modelo = c("KNN", "Árbol", "Reg. Lineal", "Naive Bayes"),
+  RMSE = c(rmse_knn, rmse_tree, rmse_lm, rmse_nb)
+)
+knitr::kable(resultados_reg[order(resultados_reg$RMSE), ])
+```
+El modelo KNN resultó ser el más preciso para la regresión, obteniendo el RMSE más bajo. Esto indica que para la fijación de precios en Airbnb, la similitud de características entre casas vecinas predice mejor el precio que las relaciones puramente lineales (Regresión Lineal) o probabilísticas categorizadas (Naive Bayes).
+
+# Actividad 4: Modelo de clasificación
+```{r}
+# Creación de la variable categórica por terciles
+p33 <- quantile(df$price_num, probs = 0.33)
+p66 <- quantile(df$price_num, probs = 0.66)
+
+df <- df %>%
+  mutate(categoria = case_when(
+    price_num <= p33 ~ "Barata",
+    price_num <= p66 ~ "Media",
+    TRUE ~ "Cara"
+  )) %>% mutate(categoria = factor(categoria, levels = c("Barata", "Media", "Cara")))
+
+train_c <- df[idx, ]
+test_c  <- df[-idx, ]
+
+train_labels <- train_c$categoria
+test_labels  <- test_c$categoria
+```
+Discretizamos los precios en tres categorías balanceadas usando los percentiles 33 y 66. Esto transforma nuestro problema de adivinar un valor exacto en dólares, a identificar a qué segmento de mercado pertenece la propiedad, facilitando el diseño de estrategias comerciales.
+
+# Actividad 5: Eficiencia del algoritmo de clasificación
+```{r}
+k_clas <- 15 # Valor inicial tentativo
+knn_pred_clas <- class::knn(train = train_s, test = test_s, cl = train_labels, k = k_clas)
+
+acc_inicial <- mean(knn_pred_clas == test_labels)
+cat(sprintf("Accuracy del modelo KNN base: %.2f%%\n", acc_inicial * 100))
+```
+Con un K arbitrario de 15, el modelo logra una eficiencia que supera el nivel de azar (33.3%), pero aún deja bastante margen de error. Esto nos indica que el algoritmo tiene capacidad de clasificar, pero necesita optimización.
+
+# Actividad 6: Análisis usando Matriz de Confusión
+```{r}
+cm_base <- confusionMatrix(knn_pred_clas, test_labels)
+print(cm_base$table)
+```
+Al observar la matriz, el modelo tiene mayor facilidad para clasificar las propiedades "Baratas" correctamente. Sin embargo, se confunde frecuentemente entre las propiedades "Medias" y "Caras". El error más grave (predecir una propiedad "Cara" como "Barata" o viceversa) ocurre menos veces, lo cual es positivo para no causar pérdidas económicas drásticas a la empresa.
+
+
+
+
+
