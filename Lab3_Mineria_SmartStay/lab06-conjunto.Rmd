@@ -11,9 +11,9 @@ output:
     toc: true
     theme: flatly
 ---
-
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+
 library(dplyr)
 library(ggplot2)
 library(rpart)
@@ -22,6 +22,8 @@ library(caret)
 library(FNN)
 library(randomForest)
 ```
+# Link github:
+https://github.com/MEN-GUE/Laboratorio_03_MDD
 
 ```{r preparar datos}
 load("listings.RData")
@@ -37,6 +39,10 @@ df <- listings %>%
          review_scores_rating, availability_30,
          minimum_nights, room_type_f, city_f) %>%
   na.omit()
+
+set.seed(123)
+# Tomamos el 20% de los datos. 
+df <- df %>% sample_frac(0.20)
 
 set.seed(123)
 idx   <- sample(1:nrow(df), size = 0.8 * nrow(df))
@@ -103,8 +109,28 @@ resultados_reg <- data.frame(
   RMSE = c(rmse_knn, rmse_tree, rmse_lm, rmse_nb)
 )
 knitr::kable(resultados_reg[order(resultados_reg$RMSE), ])
+
+resultados_reg <- data.frame(
+  Modelo = c("KNN", "Árbol", "Reg. Lineal", "Naive Bayes"),
+  RMSE = c(rmse_knn, rmse_tree, rmse_lm, rmse_nb)
+)
+
+# Imprimir tabla
+knitr::kable(resultados_reg[order(resultados_reg$RMSE), ])
+
+# Gráfica
+library(ggplot2)
+ggplot(resultados_reg, aes(x = reorder(Modelo, RMSE), y = RMSE, fill = Modelo)) +
+  geom_bar(stat = "identity", width = 0.6, alpha = 0.8) +
+  geom_text(aes(label = round(RMSE, 2)), vjust = -0.5, fontface = "bold") +
+  scale_fill_brewer(palette = "Set2") +
+  theme_minimal() +
+  labs(title = "Comparación de Error (RMSE) por Modelo",
+       subtitle = "Menor barra indica mejor rendimiento",
+       x = "Modelo", y = "RMSE (USD)") +
+  theme(legend.position = "none")
 ```
-El modelo KNN resultó ser el más preciso para la regresión, obteniendo el RMSE más bajo. Esto indica que para la fijación de precios en Airbnb, la similitud de características entre casas vecinas predice mejor el precio que las relaciones puramente lineales (Regresión Lineal) o probabilísticas categorizadas (Naive Bayes).
+En esta ejecución particular, el modelo Naive Bayes obtuvo por un margen muy estrecho el RMSE más bajo (124.97), superando ligeramente al KNN (125.69). Esto es un resultado interesante y algo inusual, ya que Naive Bayes es inherentemente un clasificador y forzarlo a hacer regresión (usando puntos medios de categorías) suele introducir error. No obstante, KNN demuestra ser sumamente competitivo y, estructuralmente, sigue siendo un algoritmo mucho más natural y confiable para predecir variables continuas complejas en comparación con la regresión lineal tradicional.
 
 # Actividad 4: Modelo de clasificación
 ```{r}
@@ -140,11 +166,119 @@ Con un K arbitrario de 15, el modelo logra una eficiencia que supera el nivel de
 # Actividad 6: Análisis usando Matriz de Confusión
 ```{r}
 cm_base <- confusionMatrix(knn_pred_clas, test_labels)
+
+# Imprimir tabla original
 print(cm_base$table)
+
+# Gráfica: Mapa de calor de la matriz de confusión
+cm_data <- as.data.frame(cm_base$table)
+
+ggplot(cm_data, aes(x = Reference, y = Prediction, fill = Freq)) +
+  geom_tile(color = "white", size = 1) +
+  geom_text(aes(label = Freq), color = "white", fontface = "bold", size = 5) +
+  scale_fill_gradient(low = "#9ecae1", high = "#3182bd", name = "Frecuencia") +
+  theme_minimal() +
+  labs(title = "Matriz de Confusión - Clasificación KNN",
+       x = "Categoría Real", y = "Categoría Predicha")
 ```
 Al observar la matriz, el modelo tiene mayor facilidad para clasificar las propiedades "Baratas" correctamente. Sin embargo, se confunde frecuentemente entre las propiedades "Medias" y "Caras". El error más grave (predecir una propiedad "Cara" como "Barata" o viceversa) ocurre menos veces, lo cual es positivo para no causar pérdidas económicas drásticas a la empresa.
 
 
+# Actividad 7: Análisis de Sobreajuste
+```{r}
+# Evaluamos el modelo sobre el mismo conjunto de entrenamiento
+knn_train_clas <- class::knn(train = train_s, test = train_s, cl = train_labels, k = k_clas)
+acc_train <- mean(knn_train_clas == train_labels)
 
+cat(sprintf("Accuracy en Entrenamiento: %.2f%%\n", acc_train * 100))
+cat(sprintf("Accuracy en Prueba: %.2f%%\n", acc_inicial * 100))
+```
+La diferencia entre la precisión en entrenamiento y en prueba no es significativamente alta (menor a 10 puntos porcentuales). Esto nos confirma que el modelo no sufre de sobreajuste (overfitting) severo. Está generalizando de manera aceptable con los datos que nunca ha visto.
+
+# Actividad 8: Modelo usando Validación Cruzada
+```{r}
+# Preparamos los datos para caret
+train_caret <- data.frame(train_s, categoria = train_labels)
+test_caret  <- data.frame(test_s, categoria = test_labels)
+
+control_cv <- trainControl(method = "cv", number = 5)
+modelo_cv <- train(categoria ~ ., data = train_caret, method = "knn", 
+                   trControl = control_cv, tuneGrid = data.frame(k = 15))
+
+pred_cv <- predict(modelo_cv, newdata = test_caret)
+acc_cv <- mean(pred_cv == test_labels)
+
+cat(sprintf("Accuracy con validación cruzada (k=15): %.2f%%\n", acc_cv * 100))
+```
+La validación cruzada nos da una métrica más confiable y robusta sobre el rendimiento del modelo, ya que divide el conjunto en diferentes pliegues y promedia el error. El rendimiento es muy similar al anterior, garantizando la estabilidad del modelo.
+
+# Actividad 9: Tuneo de Parámetros (Hiperparámetros)
+```{r}
+# Búsqueda del mejor K usando validación cruzada
+grid_k <- expand.grid(k = seq(5, 50, by = 2))
+
+modelo_tuneado <- train(categoria ~ ., data = train_caret, method = "knn", 
+                        trControl = control_cv, tuneGrid = grid_k)
+
+k_optimo <- modelo_tuneado$bestTune$k
+pred_tuneada <- predict(modelo_tuneado, newdata = test_caret)
+acc_tuneada <- mean(pred_tuneada == test_labels)
+
+cat(sprintf("Mejor K encontrado: %d\n", k_optimo))
+cat(sprintf("Accuracy con modelo tuneado: %.2f%%\n", acc_tuneada * 100))
+
+# Gráfica de evolución del Accuracy
+ggplot(modelo_tuneado$results, aes(x = k, y = Accuracy)) +
+  geom_line(color = "#2c3e50", size = 1) +
+  geom_point(color = "#e74c3c", size = 3) +
+  geom_vline(xintercept = k_optimo, linetype = "dashed", color = "#e74c3c") +
+  annotate("text", x = k_optimo + 2, y = max(modelo_tuneado$results$Accuracy), 
+           label = paste("K Óptimo =", k_optimo), color = "#e74c3c", fontface = "bold") +
+  theme_minimal() +
+  labs(title = "Optimización de Hiperparámetros",
+       subtitle = "Evolución de la Precisión (Accuracy) según la cantidad de vecinos (K)",
+       x = "Valor de K (Vecinos)", y = "Accuracy (Precisión)")
+```
+Aumentar la cantidad de vecinos a evaluar (hasta el K óptimo encontrado) ayudó a suavizar el ruido de los datos, mejorando ligeramente el porcentaje de acierto en comparación con nuestro modelo base. El tuneo demuestra que un K muy bajo tiende a memorizar el ruido, mientras que el K óptimo captura la verdadera estructura de clases.
+
+# Actividad 10: Comparación final de algoritmos de clasificación
+```{r}
+# Arbol de Decision
+tree_clas <- rpart(categoria ~ ., data = train_caret, method="class")
+tree_pred_c <- predict(tree_clas, newdata = test_caret, type="class")
+acc_tree_c <- mean(tree_pred_c == test_labels)
+
+# Random Forest
+rf_clas <- randomForest(categoria ~ ., data = train_caret, ntree=100)
+rf_pred_c <- predict(rf_clas, newdata = test_caret)
+acc_rf_c <- mean(rf_pred_c == test_labels)
+
+# Naive Bayes
+nb_clas <- naiveBayes(categoria ~ ., data = train_caret)
+nb_pred_c <- predict(nb_clas, newdata = test_caret)
+acc_nb_c <- mean(nb_pred_c == test_labels)
+
+comp_clasificacion <- data.frame(
+  Modelo = c("KNN Tuneado", "Árbol de Decisión", "Random Forest", "Naive Bayes"),
+  Accuracy = c(acc_tuneada, acc_tree_c, acc_rf_c, acc_nb_c)
+)
+knitr::kable(comp_clasificacion[order(comp_clasificacion$Accuracy, decreasing = TRUE), ])
+
+# Gráfica de comparación
+ggplot(comp_clasificacion, aes(x = reorder(Modelo, Accuracy), y = Accuracy, fill = Modelo)) +
+  geom_bar(stat = "identity", width = 0.6, alpha = 0.85) +
+  geom_text(aes(label = scales::percent(Accuracy, accuracy = 0.1)), hjust = -0.2, fontface = "bold") +
+  scale_fill_brewer(palette = "Blues") +
+  scale_y_continuous(labels = scales::percent) +
+  coord_flip() +
+  theme_minimal() +
+  labs(title = "Comparación Final de Modelos de Clasificación",
+       subtitle = "Basado en la métrica de Accuracy (Mayor es mejor)",
+       x = "Algoritmo", y = "Accuracy") + theme(legend.position = "none")
+```
+
+Al evaluar todos los algoritmos, Random Forest resulta ser el más robusto y preciso para clasificar el segmento de precio, ya que maneja internamente múltiples árboles reduciendo el error de varianza. KNN se defiende bien pero tiene la desventaja de ser costoso computacionalmente (se demora más en procesar) en la etapa de predicción, ya que debe calcular la distancia contra todos los puntos de entrenamiento en tiempo real, a diferencia del Árbol o Random Forest que simplemente atraviesan reglas condicionales pre-calculadas.
+
+Resulta interesante notar el fuerte contraste en el desempeño de Naive Bayes: mientras que en regresión (Actividad 3) obtuvo el error más bajo, en esta tarea de clasificación pura cayó al último lugar con un 50.3% de exactitud. Esto evidencia que su supuesto de independencia entre las variables penalizó fuertemente su capacidad para clasificar categorías complejas, dejando a Random Forest y a KNN como los algoritmos definitivos para segmentar este mercado.
 
 
