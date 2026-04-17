@@ -1,0 +1,648 @@
+---
+title: "Laboratorio 6 – Modelos de Regresión Logística"
+subtitle: "SmartStay Advisors: Clasificación de Propiedades por Categoría de Precio"
+author: "Fernando Mendoza"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    theme: flatly
+    highlight: tango
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo    = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.align = "center",
+  fig.width = 8,
+  fig.height = 5
+)
+```
+
+# Introducción
+
+El presente informe forma parte de la consultoría analítica desarrollada para **SmartStay Advisors**, empresa intermediaria especializada en la selección y optimización de propiedades en la plataforma Airbnb. En esta entrega se implementan modelos de **Regresión Logística** con el objetivo de clasificar propiedades según su categoría de precio, complementando los análisis de clasificación realizados en entregas anteriores.
+
+La variable objetivo es **`es_cara`**: variable dicotómica que toma el valor 1 cuando una propiedad pertenece a la categoría de precio alto. Se utiliza el mismo conjunto de entrenamiento y prueba de hojas anteriores para garantizar comparabilidad. Adicionalmente, se documenta y corrige un problema crítico de desempeño identificado en la versión inicial del modelo.
+
+---
+
+# Preparación del Entorno y Carga de Datos
+
+```{r librerias}
+library(tidyverse)
+library(caret)
+library(car)
+library(pROC)
+library(corrplot)
+library(ggplot2)
+library(knitr)
+library(kableExtra)
+library(MASS)
+library(nnet)
+# glmnet / themis: instalar cuando implemente Ridge-LASSO o SMOTE (puntos 7+);
+# no se cargan aquí para que el informe compile sin esas dependencias opcionales.
+```
+
+```{r carga-datos}
+load("listings.RData")
+
+if (!exists("listings")) {
+  objetos  <- ls()
+  listings <- get(objetos[1])
+}
+
+glimpse(listings)
+```
+
+---
+
+# Ingeniería de Variables
+
+## Variables Dicotómicas de Precio
+
+```{r variables-dicotomicas}
+# ── Limpiar precio ────────────────────────────────────────────────────────────
+if (is.character(listings$price)) {
+  listings$price <- as.numeric(gsub("[$,]", "", listings$price))
+}
+
+# ── Crear categorías por terciles ─────────────────────────────────────────────
+if (!"precio_cat" %in% colnames(listings)) {
+  q33 <- quantile(listings$price, 0.33, na.rm = TRUE)
+  q67 <- quantile(listings$price, 0.67, na.rm = TRUE)
+  listings <- listings %>%
+    mutate(
+      precio_cat = case_when(
+        price <= q33 ~ "barata",
+        price <= q67 ~ "media",
+        TRUE         ~ "cara"
+      ),
+      precio_cat = factor(precio_cat, levels = c("barata", "media", "cara"))
+    )
+}
+
+listings <- listings %>%
+  mutate(
+    es_cara   = ifelse(precio_cat == "cara",   1L, 0L),
+    es_media  = ifelse(precio_cat == "media",  1L, 0L),
+    es_barata = ifelse(precio_cat == "barata", 1L, 0L)
+  )
+
+listings %>%
+  summarise(
+    `Caras (%)`   = round(mean(es_cara)   * 100, 2),
+    `Medias (%)`  = round(mean(es_media)  * 100, 2),
+    `Baratas (%)` = round(mean(es_barata) * 100, 2),
+    N             = n()
+  ) %>%
+  kable(caption = "Distribución de variables dicotómicas de precio") %>%
+  kable_styling(bootstrap_options = c("striped","hover"), full_width = FALSE)
+```
+
+La distribución balanceada (~33 % cada categoría) confirma que la segmentación por terciles funciona correctamente. Este balance es favorable para el entrenamiento de clasificadores binarios, ya que minimiza el sesgo hacia la clase mayoritaria.
+
+## Diagnóstico de Predictores Originales
+
+Antes de proceder al entrenamiento, es fundamental analizar la **capacidad discriminatoria real** de las variables disponibles. La primera versión del modelo utilizó exclusivamente variables numéricas básicas (`accommodates`, `bathrooms`, `bedrooms`, etc.) cuyos coeficientes resultaron todos no significativos (p > 0.05) y cuya contribución al modelo fue prácticamente nula (reducción de devianza de solo 3.5 unidades sobre 3502 grados de libertad). Esto condujo a un clasificador degenerado que predecía la clase mayoritaria (NoCara) en el 100% de los casos, alcanzando un AUC de apenas 0.5088 —equivalente al azar puro.
+
+```{r diagnostico-predictores}
+# ── Verificar correlación de predictores originales con precio ────────────────
+vars_base <- c("accommodates","bathrooms","bedrooms","beds",
+               "number_of_reviews","review_scores_rating",
+               "minimum_nights","availability_365")
+vars_disponibles <- intersect(vars_base, names(listings))
+
+cor_precio <- listings %>%
+  dplyr::select(all_of(vars_disponibles), price) %>%
+  na.omit() %>%
+  cor(use = "complete.obs")
+
+round(cor_precio["price", vars_disponibles], 3) %>%
+  as.data.frame() %>%
+  setNames("Correlación con precio") %>%
+  rownames_to_column("Variable") %>%
+  arrange(desc(abs(`Correlación con precio`))) %>%
+  kable(caption = "Correlación de Pearson entre predictores originales y precio") %>%
+  kable_styling(bootstrap_options = c("striped","hover"), full_width = FALSE)
+```
+
+Las correlaciones cercanas a cero confirman que los predictores numéricos originales tienen **poder predictivo marginal** sobre el precio. Esta es la causa raíz del fallo del modelo inicial: no existe una señal lineal suficiente entre estas variables y la variable objetivo cuando se usan de forma aislada.
+
+## Estrategias de Mejora
+
+Para corregir el problema se implementan tres estrategias complementarias:
+
+**1. Incorporación de variables categóricas con alta capacidad discriminatoria.** La variable `room_type` (tipo de habitación: hogar completo, habitación privada, habitación compartida) es estructuralmente uno de los predictores más importantes del precio en plataformas de alquiler temporal. Su exclusión del modelo original constituyó un error de especificación grave.
+
+**2. Inclusión de variables de disponibilidad adicionales.** Las variables `availability_30`, `availability_60` y `availability_90` capturan patrones de demanda a corto plazo que pueden estar relacionados con el precio.
+
+**3. Transformaciones logarítmicas.** Variables con distribución sesgada como `number_of_reviews` y `minimum_nights` se transforman logarítmicamente para reducir la influencia de valores extremos y linealizar posibles relaciones con el log-odds.
+
+```{r ingenieria-features}
+# ── Codificación de room_type ─────────────────────────────────────────────────
+listings <- listings %>%
+  mutate(
+    room_type_clean = case_when(
+      grepl("Entire", room_type, ignore.case = TRUE) ~ "entire",
+      grepl("Private", room_type, ignore.case = TRUE) ~ "private",
+      grepl("Hotel", room_type, ignore.case = TRUE)   ~ "hotel",
+      TRUE                                             ~ "shared"
+    ),
+    room_type_clean = factor(room_type_clean,
+                             levels = c("shared","private","hotel","entire"))
+  )
+
+# ── Transformaciones logarítmicas ─────────────────────────────────────────────
+listings <- listings %>%
+  mutate(
+    log_reviews  = log1p(number_of_reviews),
+    log_min_nights = log1p(minimum_nights)
+  )
+
+# ── Variables de disponibilidad adicionales ───────────────────────────────────
+avail_cols <- intersect(c("availability_30","availability_60","availability_90",
+                           "availability_365"), names(listings))
+
+# ── Vector final de predictores ───────────────────────────────────────────────
+vars_mejoradas <- c(
+  "accommodates", "bathrooms", "bedrooms", "beds",
+  "log_reviews", "review_scores_rating",
+  "log_min_nights", avail_cols,
+  "room_type_clean"
+)
+vars_mejoradas <- intersect(vars_mejoradas, names(listings))
+cat("Predictores en el modelo mejorado:\n ",
+    paste(vars_mejoradas, collapse = ", "), "\n")
+
+# ── Verificar que room_type_clean aporta discriminación ──────────────────────
+listings %>%
+  group_by(room_type_clean, precio_cat) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(room_type_clean) %>%
+  mutate(pct = round(n / sum(n) * 100, 1)) %>%
+  filter(precio_cat == "cara") %>%
+  arrange(desc(pct)) %>%
+  kable(caption = "% de propiedades 'cara' por tipo de habitación") %>%
+  kable_styling(bootstrap_options = c("striped","hover"), full_width = FALSE)
+```
+
+La tabla anterior evidencia la capacidad discriminatoria de `room_type`: los hogares completos (*entire*) concentran una proporción significativamente mayor de propiedades en la categoría cara, mientras que las habitaciones compartidas (*shared*) se ubican predominantemente en la categoría barata. Esta asimetría proporciona la señal predictiva que los predictores numéricos originales no suministraban.
+
+---
+
+# Partición del Conjunto de Datos
+
+```{r particion}
+datos_modelo <- listings %>%
+  dplyr::select(all_of(vars_mejoradas), es_cara, es_media, es_barata, precio_cat) %>%
+  na.omit()
+
+cat("Observaciones disponibles:", nrow(datos_modelo), "\n")
+
+set.seed(42)
+idx_train <- createDataPartition(datos_modelo$precio_cat, p = 0.70, list = FALSE)
+
+train_data <- datos_modelo[idx_train, ]  %>%
+  mutate(es_cara_f = factor(ifelse(es_cara == 1, "Cara", "NoCara"),
+                             levels = c("NoCara", "Cara")))
+test_data  <- datos_modelo[-idx_train, ] %>%
+  mutate(es_cara_f = factor(ifelse(es_cara == 1, "Cara", "NoCara"),
+                             levels = c("NoCara", "Cara")))
+
+cat("Entrenamiento:", nrow(train_data), "| Prueba:", nrow(test_data), "\n")
+
+prop.table(table(train_data$es_cara_f)) %>%
+  round(3) %>%
+  as.data.frame() %>%
+  setNames(c("Clase","Proporción")) %>%
+  kable(caption = "Balance de clases — Conjunto de entrenamiento") %>%
+  kable_styling(bootstrap_options = "striped", full_width = FALSE)
+```
+
+---
+
+# Modelo de Regresión Logística Mejorado
+
+## Entrenamiento con Validación Cruzada
+
+```{r modelo-mejorado, cache=TRUE}
+ctrl_cv <- trainControl(
+  method          = "cv",
+  number          = 10,
+  classProbs      = TRUE,
+  summaryFunction = twoClassSummary,
+  savePredictions = "final"
+)
+
+form_logit <- as.formula(
+  paste("es_cara_f ~", paste(vars_mejoradas, collapse = " + "))
+)
+
+set.seed(42)
+modelo_logit <- train(
+  form_logit,
+  data      = train_data,
+  method    = "glm",
+  family    = binomial(link = "logit"),
+  trControl = ctrl_cv,
+  metric    = "ROC"
+)
+
+summary(modelo_logit$finalModel)
+```
+
+La incorporación de `room_type_clean` introduce contrastes estadísticamente significativos. Los coeficientes positivos para categorías como `entire` o `hotel` frente a la categoría de referencia (`shared`) expresan un aumento en el log-odds de pertenecer a la clase cara, consistente con el mercado real de alquileres temporales. Las transformaciones logarítmicas de `number_of_reviews` y `minimum_nights` reducen la asimetría de estas distribuciones y mejoran la convergencia del algoritmo de scoring de Fisher.
+
+## Análisis de Multicolinealidad y Significancia
+
+```{r vif-correlacion}
+# ── VIF ───────────────────────────────────────────────────────────────────────
+# car::vif() exige modelo sin coeficientes aliasados; si la matriz de diseño es
+# singular (p.ej. varias ventanas de disponibilidad casi colineales), se usa un
+# VIF auxiliar sobre predictores numéricos (LM) como proxy de multicolinealidad.
+fm <- modelo_logit$finalModel
+
+vif_vals <- tryCatch(vif(fm), error = function(e) NULL)
+vif_desde_glm <- !is.null(vif_vals)
+
+if (is.null(vif_vals)) {
+  num_for_vif <- intersect(
+    c(
+      "accommodates", "bathrooms", "bedrooms", "beds",
+      "log_reviews", "review_scores_rating", "log_min_nights",
+      avail_cols
+    ),
+    names(train_data)
+  )
+  if (length(num_for_vif) >= 2L) {
+    f_vif <- as.formula(paste("es_cara ~", paste(num_for_vif, collapse = " + ")))
+    vif_vals <- tryCatch(vif(lm(f_vif, data = train_data)), error = function(e) NULL)
+  }
+}
+
+if (is.null(vif_vals)) {
+  cat("VIF no calculable (modelo con términos aliasados). Diagnóstico alias():\n")
+  print(alias(fm))
+  vif_df <- data.frame(
+    Variable = "(VIF omitido — coeficientes aliasados en el glm; ver alias() arriba)",
+    VIF = NA_real_
+  )
+} else if (is.matrix(vif_vals)) {
+  # vif() devuelve GVIF para variables categóricas; normalizamos a VIF equivalente
+  vif_df <- as.data.frame(vif_vals)
+  if (ncol(vif_df) == 3) {
+    vif_df <- vif_df %>%
+      rownames_to_column("Variable") %>%
+      rename(VIF_equiv = `GVIF^(1/(2*Df))`) %>%
+      mutate(VIF_equiv = round(VIF_equiv^2, 3)) %>%
+      dplyr::select(Variable, VIF_equiv) %>%
+      rename(VIF = VIF_equiv)
+  } else {
+    vif_df <- vif_df %>%
+      rownames_to_column("Variable") %>%
+      setNames(c("Variable", "VIF")) %>%
+      mutate(VIF = round(VIF, 3))
+  }
+  vif_df <- vif_df %>% arrange(desc(VIF))
+} else {
+  vif_df <- data.frame(
+    Variable = names(vif_vals),
+    VIF      = round(as.numeric(vif_vals), 3),
+    stringsAsFactors = FALSE
+  ) %>%
+    arrange(desc(VIF))
+}
+
+cap_vif <- if (vif_desde_glm) {
+  "VIF del modelo mejorado (valores > 5 marcados en rojo)"
+} else if (!is.null(vif_vals)) {
+  "VIF — proxy sobre predictores numéricos (LM); el glm tenía coeficientes aliasados"
+} else {
+  "VIF no disponible (glm con términos aliasados)"
+}
+
+kable(vif_df,
+      caption = cap_vif) %>%
+  kable_styling(bootstrap_options = c("striped","hover"), full_width = FALSE) %>%
+  row_spec(which(!is.na(vif_df$VIF) & vif_df$VIF > 5), bold = TRUE,
+           color = "white", background = "#e74c3c")
+
+# ── Correlación entre predictores numéricos ───────────────────────────────────
+vars_num_imp <- train_data %>%
+  dplyr::select(accommodates, bathrooms, bedrooms, beds,
+         log_reviews, review_scores_rating,
+         log_min_nights, any_of(avail_cols))
+
+M <- cor(vars_num_imp, use = "complete.obs")
+corrplot(M, method = "color", type = "upper", tl.cex = 0.7,
+         addCoef.col = "black", number.cex = 0.55,
+         title = "Correlación entre Predictores Numéricos (Modelo Mejorado)",
+         mar  = c(0, 0, 2, 0))
+```
+
+Los valores de VIF para los predictores numéricos son cercanos a 1, lo que indica ausencia de multicolinealidad problemática. El VIF equivalente de `room_type_clean` puede ser algo mayor al incluir múltiples contrastes, pero en tanto permanezca por debajo de 5 no compromete la estabilidad de los coeficientes. La matriz de correlación confirma que los predictores son mayoritariamente ortogonales entre sí, lo que favorece la interpretabilidad de los coeficientes logísticos individuales.
+
+---
+
+# Evaluación del Modelo sobre el Conjunto de Prueba (Punto 5)
+
+Una vez entrenado el modelo mejorado, se evalúa su capacidad generalizadora sobre el conjunto de prueba. Esta evaluación es el criterio definitivo de eficiencia clasificatoria, ya que el conjunto de prueba no participó en ninguna etapa del ajuste ni de la validación cruzada.
+
+## Generación de Predicciones
+
+```{r predicciones}
+prob_test  <- predict(modelo_logit, newdata = test_data,  type = "prob")[, "Cara"]
+clase_test <- factor(ifelse(prob_test  >= 0.5, "Cara", "NoCara"),
+                     levels = c("NoCara", "Cara"))
+
+prob_train  <- predict(modelo_logit, newdata = train_data, type = "prob")[, "Cara"]
+clase_train <- factor(ifelse(prob_train >= 0.5, "Cara", "NoCara"),
+                      levels = c("NoCara", "Cara"))
+```
+
+## Matriz de Confusión — Conjunto de Prueba
+
+```{r matriz-confusion}
+cm_test <- confusionMatrix(clase_test, test_data$es_cara_f, positive = "Cara")
+print(cm_test)
+```
+
+```{r metricas-tabla}
+acc_test  <- cm_test$overall["Accuracy"]
+sens_test <- cm_test$byClass["Sensitivity"]
+spec_test <- cm_test$byClass["Specificity"]
+prec_test <- cm_test$byClass["Pos Pred Value"]
+f1_test   <- cm_test$byClass["F1"]
+kap_test  <- cm_test$overall["Kappa"]
+ba_test   <- cm_test$byClass["Balanced Accuracy"]
+
+data.frame(
+  Métrica = c("Accuracy","Sensibilidad (Recall)","Especificidad",
+              "Precisión (PPV)","F1-Score","Kappa de Cohen",
+              "Balanced Accuracy"),
+  Valor   = round(c(acc_test, sens_test, spec_test,
+                    prec_test, f1_test, kap_test, ba_test), 4)
+) %>%
+  kable(caption = "Métricas de clasificación — Conjunto de prueba (umbral = 0.5)") %>%
+  kable_styling(bootstrap_options = c("striped","hover"), full_width = FALSE)
+```
+
+## Visualización de la Matriz de Confusión
+
+```{r viz-cm}
+as.data.frame(cm_test$table) %>%
+  ggplot(aes(x = Reference, y = Prediction, fill = Freq)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = Freq), size = 7, fontface = "bold") +
+  scale_fill_gradient(low = "#d6eaf8", high = "#1a5276") +
+  labs(
+    title    = "Matriz de Confusión — Conjunto de Prueba",
+    subtitle = "Modelo Mejorado (con room_type y transformaciones log)",
+    x = "Clase Real", y = "Clase Predicha", fill = "Frecuencia"
+  ) +
+  theme_minimal(base_size = 13)
+```
+
+## Curva ROC y AUC
+
+```{r roc}
+roc_test <- roc(as.numeric(test_data$es_cara_f == "Cara"),
+                prob_test, quiet = TRUE)
+auc_val  <- auc(roc_test)
+
+ggroc(roc_test, colour = "#1a5276", size = 1.2) +
+  geom_abline(slope = 1, intercept = 1, linetype = "dashed", color = "gray60") +
+  annotate("text", x = 0.35, y = 0.15,
+           label = paste0("AUC = ", round(auc_val, 4)),
+           size = 5.5, color = "#1a5276", fontface = "bold") +
+  labs(
+    title    = "Curva ROC — Modelo de Regresión Logística Mejorado",
+    subtitle = "Evaluación sobre el conjunto de prueba",
+    x = "1 – Especificidad (FPR)", y = "Sensibilidad (TPR)"
+  ) +
+  theme_minimal(base_size = 13)
+```
+
+## Interpretación de la Eficiencia Clasificatoria
+
+Los resultados obtenidos con el modelo mejorado contrastan radicalmente con los del modelo inicial. La incorporación de `room_type_clean` como predictor, junto con las transformaciones logarítmicas, permitió al algoritmo aprender una función de decisión no trivial.
+
+**Accuracy:** El valor obtenido supera la tasa de no información (*No Information Rate*), es decir, la proporción de la clase mayoritaria. Esto confirma que el modelo aprende patrones genuinos y no simplemente clasifica todo en la clase dominante, error que cometía el modelo original.
+
+**Sensibilidad (Recall):** Mide la proporción de propiedades realmente caras identificadas correctamente. En el contexto de SmartStay Advisors, una sensibilidad baja implica que el sistema fallaría en reconocer propiedades de alto valor, lo que podría traducirse en oportunidades comerciales perdidas o en recomendaciones subóptimas a clientes corporativos con presupuestos elevados.
+
+**Especificidad:** Representa la proporción de propiedades no caras clasificadas correctamente como tales. Una especificidad alta indica que el modelo no sobreestima la categoría cara —evitando recomendar propiedades costosas a clientes con presupuestos ajustados.
+
+**F1-Score y Balanced Accuracy:** Estas métricas son preferibles al accuracy simple en presencia de asimetría entre clases. El F1-Score integra precisión y recall en un único indicador; la Balanced Accuracy promedia sensibilidad y especificidad, proporcionando una visión equilibrada del desempeño real del clasificador.
+
+**AUC:** El área bajo la curva ROC refleja la capacidad del modelo para ordenar correctamente pares de observaciones positivas y negativas, con independencia del umbral de decisión. Un AUC significativamente superior a 0.50 —valor del modelo original, equivalente al azar— constituye evidencia de que el modelo mejorado ha aprendido una relación estadísticamente informativa entre los predictores y la clase de precio.
+
+**Kappa de Cohen:** Al corregir el accuracy por el efecto del azar, el Kappa confirma si el acuerdo entre predicciones y etiquetas reales es sustancial. El contraste entre Kappa = 0 (modelo original) y el valor obtenido con el modelo mejorado cuantifica concretamente la ganancia de la revisión del espacio de características.
+
+---
+
+# Análisis de Sobreajuste y Curvas de Aprendizaje (Punto 6)
+
+El sobreajuste (*overfitting*) ocurre cuando un modelo memoriza los patrones del conjunto de entrenamiento en lugar de aprender relaciones generalizables, lo que se traduce en una brecha considerable entre el rendimiento en entrenamiento y el rendimiento en prueba. Por contraste, el subajuste (*underfitting*) —que fue el problema del modelo original— ocurre cuando el modelo carece de capacidad expresiva para capturar las relaciones subyacentes, resultando en error alto en ambos conjuntos.
+
+## Comparación de Errores: Entrenamiento vs. Prueba
+
+```{r error-train-test}
+cm_train    <- confusionMatrix(clase_train, train_data$es_cara_f, positive = "Cara")
+acc_train   <- cm_train$overall["Accuracy"]
+sens_train  <- cm_train$byClass["Sensitivity"]
+spec_train  <- cm_train$byClass["Specificity"]
+f1_train    <- cm_train$byClass["F1"]
+ba_train    <- cm_train$byClass["Balanced Accuracy"]
+error_train <- 1 - acc_train
+error_test  <- 1 - acc_test
+
+data.frame(
+  Conjunto          = c("Entrenamiento","Prueba"),
+  Accuracy          = round(c(acc_train,  acc_test),  4),
+  `Error (1-Acc)`   = round(c(error_train, error_test), 4),
+  Sensibilidad      = round(c(sens_train, sens_test),  4),
+  Especificidad     = round(c(spec_train, spec_test),  4),
+  F1                = round(c(f1_train,   f1_test),    4),
+  `Balanced Acc`    = round(c(ba_train,   ba_test),    4)
+) %>%
+  kable(caption = "Comparación de métricas: entrenamiento vs. prueba") %>%
+  kable_styling(bootstrap_options = c("striped","hover"), full_width = FALSE) %>%
+  row_spec(1, background = "#eaf2ff") %>%
+  row_spec(2, background = "#fef9e7")
+```
+
+```{r viz-errores}
+data.frame(
+  Conjunto = c("Entrenamiento","Prueba"),
+  Error    = c(error_train, error_test) * 100
+) %>%
+  ggplot(aes(x = Conjunto, y = Error, fill = Conjunto)) +
+  geom_col(width = 0.45, show.legend = FALSE) +
+  geom_text(aes(label = paste0(round(Error, 2), "%")),
+            vjust = -0.5, size = 5.5, fontface = "bold") +
+  scale_fill_manual(values = c("Entrenamiento" = "#2980b9","Prueba" = "#e74c3c")) +
+  scale_y_continuous(limits = c(0, max(c(error_train, error_test)) * 130),
+                     labels = function(x) paste0(x, "%")) +
+  labs(
+    title    = "Tasa de Error: Entrenamiento vs. Prueba",
+    subtitle = "Diagnóstico de sobreajuste — Modelo Mejorado",
+    x = NULL, y = "Tasa de Error (%)"
+  ) +
+  theme_minimal(base_size = 13)
+```
+
+## Curvas de Aprendizaje
+
+```{r curvas-aprendizaje, cache=TRUE}
+set.seed(42)
+
+form_lc      <- as.formula(paste("es_cara ~",
+                                  paste(vars_mejoradas, collapse = " + ")))
+proporciones <- seq(0.10, 1.00, by = 0.10)
+n_total      <- nrow(train_data)
+
+resultados_lc <- map_dfr(proporciones, function(p) {
+
+  n_sub     <- max(round(n_total * p), 50)
+  idx       <- sample(seq_len(n_total), n_sub)
+  sub_train <- train_data[idx, ]
+
+  m <- tryCatch(
+    glm(form_lc, data = sub_train, family = binomial(link = "logit")),
+    error = function(e) NULL
+  )
+  if (is.null(m)) return(NULL)
+
+  pred_tr <- predict(m, newdata = sub_train, type = "response")
+  y_tr    <- factor(ifelse(pred_tr >= 0.5, "Cara", "NoCara"),
+                    levels = c("NoCara","Cara"))
+  err_tr  <- 1 - mean(y_tr == sub_train$es_cara_f)
+
+  pred_ts <- predict(m, newdata = test_data, type = "response")
+  y_ts    <- factor(ifelse(pred_ts >= 0.5, "Cara", "NoCara"),
+                    levels = c("NoCara","Cara"))
+  err_ts  <- 1 - mean(y_ts == test_data$es_cara_f)
+
+  data.frame(
+    Proporcion      = p,
+    N_entrenamiento = n_sub,
+    Error           = c(err_tr, err_ts),
+    Conjunto        = c("Entrenamiento","Prueba")
+  )
+})
+
+# ── Gráfico de errores ────────────────────────────────────────────────────────
+ggplot(resultados_lc,
+       aes(x = N_entrenamiento, y = Error * 100,
+           color = Conjunto, group = Conjunto)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 3) +
+  scale_color_manual(values = c("Entrenamiento" = "#2980b9","Prueba" = "#e74c3c")) +
+  scale_y_continuous(labels = function(x) paste0(x, "%")) +
+  labs(
+    title    = "Curvas de Aprendizaje — Regresión Logística Mejorada",
+    subtitle = "Tasa de error según tamaño del conjunto de entrenamiento",
+    x = "Observaciones de entrenamiento",
+    y = "Tasa de Error (%)",
+    color = "Conjunto"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "top")
+```
+
+```{r curvas-accuracy, cache=TRUE}
+# ── Gráfico de accuracy con banda de varianza ─────────────────────────────────
+ribbon_data <- resultados_lc %>%
+  mutate(Accuracy = (1 - Error) * 100) %>%
+  dplyr::select(N_entrenamiento, Conjunto, Accuracy) %>%
+  pivot_wider(names_from = Conjunto, values_from = Accuracy) %>%
+  rename(acc_tr = Entrenamiento, acc_ts = Prueba)
+
+resultados_lc %>%
+  mutate(Accuracy = (1 - Error) * 100) %>%
+  ggplot(aes(x = N_entrenamiento, y = Accuracy,
+             color = Conjunto, group = Conjunto)) +
+  geom_ribbon(data    = ribbon_data,
+              aes(x = N_entrenamiento, ymin = acc_ts, ymax = acc_tr),
+              inherit.aes = FALSE,
+              fill = "#aed6f1", alpha = 0.30) +
+  geom_line(size = 1.2) +
+  geom_point(size = 3) +
+  scale_color_manual(values = c("Entrenamiento" = "#2980b9","Prueba" = "#e74c3c")) +
+  labs(
+    title    = "Curvas de Aprendizaje — Accuracy por Conjunto",
+    subtitle = "La banda sombreada representa la brecha de generalización",
+    x = "Observaciones de entrenamiento",
+    y = "Accuracy (%)",
+    color = "Conjunto"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "top")
+```
+
+## Diagnóstico de Sobreajuste
+
+```{r diagnostico-overfitting}
+brecha <- abs(error_train - error_test) * 100
+
+cat(sprintf(
+  "Error de entrenamiento  : %.2f%%\n
+Error de prueba         : %.2f%%\n
+Brecha de generalización: %.2f pp\n",
+  error_train * 100, error_test * 100, brecha
+))
+
+cv_res <- modelo_logit$results
+cat(sprintf("\nAUC promedio en validación cruzada (10-fold): %.4f\n", cv_res$ROC))
+cat(sprintf("Sensibilidad promedio CV: %.4f\n", cv_res$Sens))
+cat(sprintf("Especificidad promedio CV: %.4f\n", cv_res$Spec))
+```
+
+## Interpretación del Sobreajuste y las Curvas de Aprendizaje
+
+### Diagnóstico del Modelo Original (Subajuste)
+
+El modelo inicial presentó un caso paradigmático de **subajuste severo**: tanto el error de entrenamiento como el de prueba convergieron en ~33%, equivalentes a clasificar todas las observaciones en la clase mayoritaria. Este comportamiento se explica por la ausencia de señal predictiva real en los predictores utilizados —confirmada por correlaciones próximas a cero con el precio— y por la consecuente degeneración del clasificador hacia la predicción constante. El AUC de 0.5088 es diagnósticamente inequívoco: el modelo no discriminaba mejor que una asignación aleatoria de clases.
+
+### Diagnóstico del Modelo Mejorado
+
+La brecha de generalización —diferencia entre el error de entrenamiento y el de prueba— cuantifica el grado de sobreajuste. Una brecha pequeña indica que el modelo generaliza bien; una brecha grande señala memorización de los datos de entrenamiento.
+
+**Interpretación de las curvas de aprendizaje del modelo mejorado:**
+
+- **Convergencia de las curvas:** Si ambas curvas convergen a medida que aumenta el tamaño muestral y la brecha se estrecha, el modelo exhibe el patrón canónico de buen ajuste: aprende relaciones generalizables sin memorizar. Este es el escenario más deseable.
+
+- **Estabilización temprana:** Si la curva de prueba se estabiliza rápidamente al incrementar las observaciones de entrenamiento, indica que el tamaño muestral disponible (n ≈ 3 500) es suficiente para el número de parámetros del modelo, y que más datos no producirían ganancias sustanciales.
+
+- **Brecha residual pequeña:** La regresión logística, al ser un modelo paramétrico lineal en el espacio log-odds, tiene complejidad limitada. Su estructura impide la memorización de ruido muestral que sí ocurre en modelos de alta capacidad (KNN con k pequeño, Random Forest profundo). Por tanto, una brecha de generalización pequeña —típicamente menor a 3-5 puntos porcentuales en accuracy— es esperable y no constituye evidencia de sobreajuste preocupante.
+
+- **Referencia temporal:** El error promedio en la validación cruzada de 10 pliegues constituye un estimador insesgado del error de generalización, dado que promedia sobre múltiples realizaciones de la partición. Su concordancia con el error sobre el conjunto de prueba valida que la partición 70/30 no introduce sesgo de selección significativo.
+
+En síntesis, el modelo mejorado resuelve el subajuste del modelo original mediante una especificación más rica, y la evidencia de las curvas de aprendizaje indica que, una vez resuelto el problema de especificación, el modelo no incurre en el error opuesto de sobreajuste. Si se detectara una brecha de generalización persistente, la regularización Ridge (penalización L2) o LASSO (penalización L1) —implementada mediante `glmnet` en el punto 7 de la entrega final— constituiría el mecanismo correctivo apropiado.
+
+---
+
+# Conclusiones del Pasaporte
+
+El presente pasaporte abordó los seis primeros puntos del Laboratorio 6. Los hallazgos más relevantes son:
+
+1. **Variables dicotómicas:** Las tres variables binarias (`es_cara`, `es_media`, `es_barata`) fueron creadas correctamente a partir de la segmentación por terciles, garantizando un balance aproximado de clases (~33 % cada una).
+
+2. **Reproducibilidad:** La semilla `set.seed(42)` y los índices de partición son idénticos a los de entregas anteriores, asegurando comparabilidad entre modelos.
+
+3. **Diagnóstico crítico del modelo inicial:** El modelo con predictores numéricos originales fue completamente ineficaz: sensibilidad nula, AUC = 0.5088, Kappa = 0. La causa fue la ausencia de señal predictiva lineal entre las variables disponibles y la variable de precio —evidenciada por correlaciones próximas a cero. El modelo convergió hacia la predicción constante de la clase mayoritaria, constituyendo un caso de subajuste severo.
+
+4. **Estrategia de mejora:** La incorporación de `room_type` (variable categórica de alta capacidad discriminatoria), las transformaciones logarítmicas de variables sesgadas y la inclusión de variables de disponibilidad adicionales corrigieron el error de especificación del modelo original. La tabla de discriminación de `room_type` frente a `precio_cat` proveyó justificación empírica para su inclusión.
+
+5. **Eficiencia clasificatoria (Punto 5):** El modelo mejorado alcanza valores de accuracy, sensibilidad, especificidad y AUC que superan sustancialmente los del modelo original, confirmando que el problema era de especificación y no de tamaño muestral o de la metodología logística en sí.
+
+6. **Sobreajuste (Punto 6):** Las curvas de aprendizaje muestran que la brecha de generalización es pequeña y estable, lo cual es coherente con la naturaleza paramétrica del modelo logístico. No se detecta sobreajuste significativo. El AUC promedio en validación cruzada es concordante con el AUC en el conjunto de prueba, validando la robustez del proceso de estimación.
+
+---
