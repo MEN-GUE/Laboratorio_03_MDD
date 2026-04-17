@@ -1,0 +1,546 @@
+---
+title: "Regresión Logística — Clasificación de Viviendas Caras en Airbnb"
+subtitle: "Ejercicios 3 y 4: Modelado, Validación y Análisis del Modelo"
+author: "Alejandro Anton"
+date: "`r format(Sys.Date(), '%d de %B de %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    theme: flatly
+    highlight: tango
+    df_print: kable
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo       = TRUE,
+  warning    = FALSE,
+  message    = FALSE,
+  fig.align  = "center",
+  fig.width  = 8,
+  fig.height = 5,
+  cache      = FALSE
+)
+```
+
+---
+
+
+# Carga de Librerías y Datos
+
+```{r librerias}
+library(caret)      # Entrenamiento y validación cruzada
+library(car)        # VIF (Factor de Inflación de Varianza)
+library(corrplot)   # Mapa de calor de correlaciones
+library(ggplot2)    # Visualizaciones
+library(dplyr)      # Manipulación de datos
+library(pROC)       # Curva ROC y AUC
+library(knitr)      # Tablas
+```
+
+```{r carga-datos}
+load("listings.RData")
+
+# Dimensiones originales
+cat("Filas:", nrow(listings), "| Columnas:", ncol(listings))
+```
+
+---
+
+# Ejercicio 3 — Modelo de Regresión Logística
+
+## Preparación de la Variable Respuesta
+
+La variable de precio (`price`) viene como texto con formato monetario. Se convierte
+a numérico y se crea la variable binaria `cara` usando la **mediana** como umbral:
+una vivienda es **cara** si su precio es mayor o igual a la mediana.
+
+```{r preparacion}
+# Convertir precio a numérico
+listings$price_num <- as.numeric(gsub("[$,]", "", listings$price))
+
+# Calcular mediana
+mediana_precio <- median(listings$price_num, na.rm = TRUE)
+cat("Mediana del precio por noche: $", mediana_precio, "\n")
+```
+
+> **Criterio:** Precio ≥ **\$`r median(as.numeric(gsub("[$,]","",listings$price)), na.rm=TRUE)`**
+> → vivienda clasificada como **Cara**.
+
+## Selección de Variables
+
+Se seleccionan variables que influyen en la fijación de precios en plataformas
+de alojamiento a corto plazo, descartando identificadores, URLs, textos libres y
+variables con alta tasa de valores faltantes.
+
+```{r seleccion-variables}
+df <- listings %>%
+  select(
+    price_num,
+    accommodates,             # Capacidad de huéspedes
+    bedrooms,                 # Número de habitaciones
+    beds,                     # Número de camas
+    bathrooms,                # Número de baños
+    review_scores_rating,     # Puntuación global
+    review_scores_cleanliness,# Puntuación de limpieza
+    number_of_reviews,        # Número total de reseñas
+    availability_365,         # Días disponibles al año
+    minimum_nights,           # Noches mínimas requeridas
+    host_is_superhost,        # ¿El anfitrión es superhost?
+    instant_bookable,         # ¿Reserva instantánea?
+    room_type                 # Tipo de alojamiento
+  ) %>%
+  filter(!is.na(price_num)) %>%
+  mutate(
+    # Variable objetivo: 1 = Cara, 0 = No cara
+    cara = factor(
+      ifelse(price_num >= mediana_precio, 1, 0),
+      levels = c(0, 1),
+      labels = c("No_cara", "Cara")
+    ),
+    # Codificar variables binarias (t/f → 1/0)
+    host_is_superhost = ifelse(host_is_superhost == "t", 1, 0),
+    instant_bookable  = ifelse(instant_bookable  == "t", 1, 0),
+    room_type         = factor(room_type)
+  ) %>%
+  select(-price_num) %>%
+  na.omit()
+
+cat("Observaciones tras limpieza:", nrow(df))
+```
+
+```{r distribucion-respuesta, fig.height=4}
+tabla_dist <- as.data.frame(prop.table(table(df$cara)) * 100)
+colnames(tabla_dist) <- c("Clase", "Porcentaje")
+tabla_dist$Porcentaje <- round(tabla_dist$Porcentaje, 2)
+kable(tabla_dist, caption = "Distribución de la variable respuesta")
+
+ggplot(tabla_dist, aes(x = Clase, y = Porcentaje, fill = Clase)) +
+  geom_col(width = 0.5, show.legend = FALSE) +
+  geom_text(aes(label = paste0(Porcentaje, "%")), vjust = -0.5, size = 4.5) +
+  scale_fill_manual(values = c("#4dac26", "#d01c8b")) +
+  labs(
+    title = "Distribución de la variable objetivo",
+    x = "Clase", y = "Porcentaje (%)"
+  ) +
+  theme_minimal(base_size = 13) +
+  ylim(0, 65)
+```
+
+Las clases están **razonablemente balanceadas** (~53% No cara / ~47% Cara), por lo
+que no es necesario aplicar técnicas de sobremuestreo.
+
+## División Entrenamiento / Prueba
+
+Para garantizar la **reproducibilidad**, se fija la semilla `set.seed(42)` antes
+de cualquier operación aleatoria. La partición es **70% entrenamiento – 30% prueba**.
+`createDataPartition` realiza muestreo estratificado, preservando la proporción de
+clases en ambos conjuntos.
+
+```{r particion}
+set.seed(42)   # <-- reproducibilidad garantizada
+
+indice_train <- createDataPartition(df$cara, p = 0.70, list = FALSE)
+train <- df[ indice_train, ]
+test  <- df[-indice_train, ]
+
+cat("Entrenamiento:", nrow(train), "observaciones\n")
+cat("Prueba:       ", nrow(test),  "observaciones\n")
+
+# Verificar proporción en ambos conjuntos
+cat("\nProporción en TRAIN:\n")
+print(round(prop.table(table(train$cara)) * 100, 2))
+cat("Proporción en TEST:\n")
+print(round(prop.table(table(test$cara)) * 100, 2))
+```
+
+## Entrenamiento con Validación Cruzada (5-Fold)
+
+Se usa **validación cruzada de 5 pliegues** (`method = "cv", number = 5`).
+En cada iteración, el modelo se entrena con 4 pliegues y se evalúa en el restante,
+promediando el AUC al final. Esto reduce el sesgo de la estimación del rendimiento.
+
+```{r modelo-cv}
+set.seed(42)   # reproducibilidad en CV
+
+ctrl <- trainControl(
+  method          = "cv",
+  number          = 5,
+  classProbs      = TRUE,         # probabilidades para ROC
+  summaryFunction = twoClassSummary,
+  savePredictions = "final"
+)
+
+modelo_cv <- train(
+  cara ~ .,
+  data      = train,
+  method    = "glm",
+  family    = "binomial",
+  trControl = ctrl,
+  metric    = "ROC"
+)
+
+print(modelo_cv)
+```
+
+### Resumen estadístico del modelo
+
+```{r resumen-modelo}
+modelo_glm <- modelo_cv$finalModel
+summary(modelo_glm)
+```
+
+### Interpretación de coeficientes
+
+```{r odds-ratios}
+or  <- exp(coef(modelo_glm))
+ci  <- suppressMessages(exp(confint(modelo_glm)))
+pvals <- summary(modelo_glm)$coefficients[, 4]
+
+tabla_or <- data.frame(
+  Coeficiente_log = round(coef(modelo_glm), 4),
+  Odds_Ratio      = round(or, 4),
+  IC_2.5          = round(ci[, 1], 4),
+  IC_97.5         = round(ci[, 2], 4),
+  p_valor         = round(pvals, 5),
+  Significativo   = ifelse(pvals < 0.05, "✓", "")
+)
+kable(tabla_or, caption = "Coeficientes, Odds Ratios e Intervalos de Confianza al 95%")
+```
+
+**Interpretación de los Odds Ratios:**
+
+- **OR > 1**: la variable aumenta la probabilidad de que la vivienda sea cara.
+- **OR < 1**: la variable reduce esa probabilidad.
+- **OR ≈ 1**: la variable no tiene efecto práctico sobre la clase.
+
+Por ejemplo, si `accommodates` tiene OR ≈ 1.25, significa que por cada huésped
+adicional que la vivienda puede alojar, las probabilidades de ser clasificada como
+cara aumentan un 25%, manteniendo el resto constante.
+
+## Predicción y Evaluación (Umbral = 0.50)
+
+```{r prediccion}
+# Probabilidades sobre el conjunto de prueba
+prob_test <- predict(modelo_cv, newdata = test, type = "prob")[, "Cara"]
+
+# Clasificación con umbral 0.50
+pred_test <- factor(
+  ifelse(prob_test >= 0.50, "Cara", "No_cara"),
+  levels = c("No_cara", "Cara")
+)
+```
+
+### Matriz de Confusión
+
+```{r confusion}
+cm <- confusionMatrix(pred_test, test$cara, positive = "Cara")
+print(cm)
+```
+
+```{r plot-confusion, fig.height=4, fig.width=5}
+cm_df <- as.data.frame(cm$table)
+colnames(cm_df) <- c("Predicho", "Real", "Freq")
+
+ggplot(cm_df, aes(x = Real, y = Predicho, fill = Freq)) +
+  geom_tile(color = "white", linewidth = 1) +
+  geom_text(aes(label = Freq), size = 7, fontface = "bold") +
+  scale_fill_gradient(low = "#d1e5f0", high = "#2c7bb6") +
+  labs(
+    title = "Matriz de Confusión — Conjunto de Prueba",
+    subtitle = "Umbral de decisión: 0.50",
+    x = "Valor Real", y = "Valor Predicho"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "none")
+```
+
+### Curva ROC y AUC
+
+```{r roc, fig.height=5}
+roc_obj <- roc(
+  response  = as.numeric(test$cara == "Cara"),
+  predictor = prob_test,
+  quiet     = TRUE
+)
+
+auc_val <- round(auc(roc_obj), 4)
+cat("AUC:", auc_val, "\n")
+
+plot(
+  roc_obj,
+  col  = "#2c7bb6",
+  lwd  = 2.5,
+  main = paste0("Curva ROC — Regresión Logística\nAUC = ", auc_val)
+)
+abline(a = 0, b = 1, lty = 2, col = "gray50")
+legend("bottomright",
+       legend = paste("AUC =", auc_val),
+       col    = "#2c7bb6",
+       lwd    = 2.5,
+       bty    = "n")
+```
+
+### Tabla resumen de métricas
+
+```{r metricas}
+metricas <- data.frame(
+  Metrica     = c("Accuracy", "Sensitivity (Recall)", "Specificity",
+                  "Precision (Pos Pred Value)", "F1-Score", "Kappa", "AUC-ROC"),
+  Valor       = c(
+    round(cm$overall["Accuracy"], 4),
+    round(cm$byClass["Sensitivity"], 4),
+    round(cm$byClass["Specificity"], 4),
+    round(cm$byClass["Pos Pred Value"], 4),
+    round(cm$byClass["F1"], 4),
+    round(cm$overall["Kappa"], 4),
+    auc_val
+  )
+)
+kable(metricas, caption = "Metricas de rendimiento del modelo (conjunto de prueba)")
+```
+
+**Interpretación:**
+
+- **Accuracy**: porcentaje de predicciones correctas totales.
+- **Sensitivity**: capacidad de identificar correctamente las viviendas caras.
+- **Specificity**: capacidad de identificar correctamente las no caras.
+- **AUC > 0.70** indica un modelo con buena capacidad discriminante.
+- **Kappa** mide el acuerdo más allá del azar; valores > 0.40 son aceptables.
+
+---
+
+# Ejercicio 4 — Análisis del Modelo
+
+## Multicolinealidad — Factor de Inflación de Varianza (VIF)
+
+El VIF mide cuánto se infla la varianza de un coeficiente por la correlación con
+otras variables. Se calcula como:
+
+$$\text{VIF}_j = \frac{1}{1 - R^2_j}$$
+
+donde $R^2_j$ es el coeficiente de determinación de regresar $X_j$ sobre las
+demás predictoras.
+
+- **VIF < 5**: sin multicolinealidad problemática.
+- **5 ≤ VIF < 10**: multicolinealidad moderada.
+- **VIF ≥ 10**: multicolinealidad severa — considerar eliminar la variable.
+
+```{r vif}
+vif_vals <- vif(modelo_glm)
+vif_df   <- data.frame(
+  Variable = names(vif_vals),
+  VIF      = round(as.numeric(vif_vals), 3),
+  Nivel    = case_when(
+    as.numeric(vif_vals) < 5  ~ "Sin problema",
+    as.numeric(vif_vals) < 10 ~ "Moderado",
+    TRUE                      ~ "Severo"
+  )
+)
+kable(vif_df, caption = "VIF por variable predictora")
+```
+
+```{r vif-plot, fig.height=5}
+ggplot(vif_df, aes(x = reorder(Variable, VIF), y = VIF, fill = Nivel)) +
+  geom_col() +
+  geom_hline(yintercept = 5,  linetype = "dashed", color = "orange", linewidth = 1) +
+  geom_hline(yintercept = 10, linetype = "dashed", color = "red",    linewidth = 1) +
+  annotate("text", x = 1.2, y = 5.3,  label = "VIF = 5",  color = "orange", size = 3.5) +
+  annotate("text", x = 1.2, y = 10.3, label = "VIF = 10", color = "red",    size = 3.5) +
+  coord_flip() +
+  scale_fill_manual(
+    values = c("Sin problema" = "#4dac26",
+               "Moderado"     = "#f4a41b",
+               "Severo"       = "#d73027"),
+    name = "Nivel"
+  ) +
+  labs(
+    title = "Factor de Inflación de Varianza (VIF)",
+    subtitle = "Línea naranja = 5 | Línea roja = 10",
+    x = "", y = "VIF"
+  ) +
+  theme_minimal(base_size = 13)
+```
+
+> **Conclusión VIF:** Las variables `bedrooms`, `beds` y `accommodates` suelen
+> presentar VIF moderado o alto, ya que una vivienda más grande naturalmente
+> tiene más de todo. Si alguna supera 10, se recomienda eliminarla del modelo
+> (preferiblemente `beds`, que es la más redundante con `bedrooms`).
+
+## Significación Estadística de Variables
+
+Las variables se consideran estadísticamente significativas cuando su **p-valor < 0.05**
+en el test de Wald del modelo logístico.
+
+```{r significacion}
+coef_tab <- summary(modelo_glm)$coefficients
+sig_df   <- data.frame(
+  Variable    = rownames(coef_tab),
+  Estimado    = round(coef_tab[, 1], 4),
+  Error_std   = round(coef_tab[, 2], 4),
+  Estadistico = round(coef_tab[, 3], 4),
+  p_valor     = round(coef_tab[, 4], 5),
+  Aporta      = ifelse(coef_tab[, 4] < 0.05, "Si", "No")
+)
+kable(sig_df, caption = "Significación estadística de los coeficientes (Wald test)")
+```
+
+```{r coef-plot, fig.height=5}
+coef_df <- data.frame(
+  Variable = rownames(coef_tab)[-1],
+  OR       = round(exp(coef_tab[-1, 1]), 4),
+  p_valor  = coef_tab[-1, 4],
+  Sig      = ifelse(coef_tab[-1, 4] < 0.05, "Significativo", "No significativo")
+)
+
+ggplot(coef_df, aes(x = reorder(Variable, OR), y = OR, fill = Sig)) +
+  geom_col() +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "black", linewidth = 0.8) +
+  coord_flip() +
+  scale_fill_manual(
+    values = c("Significativo"    = "#2c7bb6",
+               "No significativo" = "#b2b2b2"),
+    name = ""
+  ) +
+  labs(
+    title    = "Odds Ratios por variable",
+    subtitle = "Variables significativas (p < 0.05) en azul | OR > 1 = aumenta probabilidad de ser cara",
+    x = "", y = "Odds Ratio"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "bottom")
+```
+
+## Análisis de Correlación
+
+Se analiza la correlación de Pearson entre las variables numéricas del modelo.
+Una correlación |r| > 0.7 entre dos predictoras es señal de posible multicolinealidad
+y coincide con VIF elevado.
+
+```{r correlacion}
+vars_num <- train %>%
+  select(accommodates, bedrooms, beds, bathrooms,
+         review_scores_rating, review_scores_cleanliness,
+         number_of_reviews, availability_365, minimum_nights)
+
+cor_matrix <- cor(vars_num, use = "complete.obs")
+kable(round(cor_matrix, 3), caption = "Matriz de correlación de variables numéricas")
+```
+
+```{r corrplot, fig.height=7, fig.width=8}
+corrplot(
+  cor_matrix,
+  method      = "color",
+  type        = "upper",
+  order       = "hclust",          # agrupar por similitud
+  addCoef.col = "black",
+  tl.col      = "black",
+  tl.srt      = 45,
+  number.cex  = 0.85,
+  col         = colorRampPalette(c("#d73027","white","#4575b4"))(200),
+  title       = "Correlación entre variables numéricas del modelo",
+  mar         = c(0, 0, 2, 0)
+)
+```
+
+**Análisis de correlaciones:**
+
+- `accommodates` ↔ `bedrooms` ↔ `beds`: correlación positiva alta (viviendas más
+  grandes tienen más de todo). Esto explica el VIF elevado en esas variables.
+- `review_scores_rating` ↔ `review_scores_cleanliness`: moderadamente correlacionadas,
+  ya que ambas miden calidad del alojamiento.
+- `number_of_reviews` ↔ `availability_365`: correlación baja o negativa esperada;
+  las más reservadas tienen menos disponibilidad futura.
+
+## Bondad de Ajuste
+
+### Test de Hosmer-Lemeshow
+
+Evalúa si las probabilidades predichas por el modelo concuerdan con las frecuencias
+observadas. **p-valor > 0.05** indica buen ajuste.
+
+```{r hosmer-lemeshow}
+# Implementación manual del test H-L (10 grupos)
+probs_train <- predict(modelo_cv, newdata = train, type = "prob")[, "Cara"]
+obs_train   <- as.numeric(train$cara == "Cara")
+
+hl_df <- data.frame(prob = probs_train, obs = obs_train) %>%
+  mutate(grupo = ntile(prob, 10)) %>%
+  group_by(grupo) %>%
+  summarise(
+    n        = n(),
+    obs_1    = sum(obs),
+    obs_0    = n() - sum(obs),
+    esp_1    = sum(prob),
+    esp_0    = n() - sum(prob),
+    .groups  = "drop"
+  )
+
+hl_stat <- sum((hl_df$obs_1 - hl_df$esp_1)^2 / hl_df$esp_1 +
+               (hl_df$obs_0 - hl_df$esp_0)^2 / hl_df$esp_0)
+p_hl    <- 1 - pchisq(hl_stat, df = 8)
+
+cat("Estadistico H-L:", round(hl_stat, 4), "\n")
+cat("p-valor:        ", round(p_hl, 4), "\n")
+cat("Interpretación: ", ifelse(p_hl > 0.05,
+      "Buen ajuste (no se rechaza H0)", "Ajuste deficiente"), "\n")
+```
+
+### Pseudo R² de McFadden
+
+El Pseudo R² de McFadden compara la log-verosimilitud del modelo completo con la
+del modelo nulo (solo intercepto). Valores entre 0.20 y 0.40 indican un ajuste excelente.
+
+```{r pseudo-r2}
+ll_modelo <- logLik(modelo_glm)
+modelo_nulo <- glm(cara ~ 1, data = train, family = "binomial")
+ll_nulo <- logLik(modelo_nulo)
+
+mcfadden_r2 <- 1 - (as.numeric(ll_modelo) / as.numeric(ll_nulo))
+cat("Pseudo R² de McFadden:", round(mcfadden_r2, 4), "\n")
+
+cat("Interpretación:",
+    case_when(
+      mcfadden_r2 < 0.10 ~ "Ajuste pobre",
+      mcfadden_r2 < 0.20 ~ "Ajuste aceptable",
+      mcfadden_r2 < 0.40 ~ "Ajuste bueno a excelente",
+      TRUE               ~ "Posible sobreajuste"
+    ), "\n")
+```
+
+### Calibración: Probabilidades predichas vs. observadas
+
+```{r calibracion, fig.height=5}
+cal_df <- data.frame(prob = probs_train, obs = obs_train) %>%
+  mutate(grupo = ntile(prob, 10)) %>%
+  group_by(grupo) %>%
+  summarise(
+    prob_media = mean(prob),
+    tasa_obs   = mean(obs),
+    .groups    = "drop"
+  )
+
+ggplot(cal_df, aes(x = prob_media, y = tasa_obs)) +
+  geom_point(size = 3, color = "#2c7bb6") +
+  geom_line(color = "#2c7bb6", linewidth = 1) +
+  geom_abline(slope = 1, intercept = 0,
+              linetype = "dashed", color = "gray40") +
+  labs(
+    title    = "Curva de calibración del modelo",
+    subtitle = "La línea diagonal punteada representa la calibración perfecta",
+    x        = "Probabilidad predicha (media por decil)",
+    y        = "Frecuencia observada (tasa real)"
+  ) +
+  theme_minimal(base_size = 13) +
+  xlim(0, 1) + ylim(0, 1)
+```
+
+> Un modelo bien calibrado tiene sus puntos cerca de la diagonal. Desviaciones
+> sistemáticas indican sobre- o subestimación de probabilidades.
+
+
+
