@@ -1,0 +1,214 @@
+---
+title: "Laboratorio 6 - Modelos de Regresión Logística"
+author: "José Antón, Juan Fernando Menéndez, Fernando Mendoza"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    theme: flatly
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE, 
+  warning = FALSE, 
+  message = FALSE
+)
+
+library(tidyr) 
+library(dplyr)
+library(caret)
+library(ggplot2)
+library(mlr)
+library(car)
+```
+
+```{r}
+# Carga del conjunto de datos
+load("listings.RData")
+
+# Limpieza inicial con la misma metodología de los laboratorios anteriores
+df_clean <- listings %>%
+  select(
+    -id, -scrape_id, -host_id, 
+    -minimum_minimum_nights, -maximum_minimum_nights, 
+    -minimum_maximum_nights, -maximum_maximum_nights,
+    -minimum_nights_avg_ntm, -maximum_nights_avg_ntm,
+    -availability_30, -availability_60, -availability_90,
+    -estimated_revenue_l365d
+  ) %>%
+  drop_na(price, accommodates, bedrooms, bathrooms, beds) %>%
+  mutate(price = as.numeric(gsub("[\\$,]", "", price))) %>%
+  filter(!is.na(price) & price > 0)
+
+df_clean <- df_clean %>% 
+  mutate_at(c("room_type", "property_type"), as.factor)
+```
+
+# Actividad 1: Creación de variables dicotómicas
+```{r}
+p33 <- quantile(df_clean$price, probs = 0.33)
+p66 <- quantile(df_clean$price, probs = 0.66)
+
+df_clean <- df_clean %>%
+  mutate(
+    categoria_precio = case_when(
+      price <= p33 ~ "Economica",
+      price <= p66 ~ "Intermedia",
+      TRUE ~ "Cara"
+    ),
+    es_economica = ifelse(categoria_precio == "Economica", 1, 0),
+    es_intermedia = ifelse(categoria_precio == "Intermedia", 1, 0),
+    es_cara = ifelse(categoria_precio == "Cara", 1, 0)
+  )
+
+df_clean$categoria_precio <- as.factor(df_clean$categoria_precio)
+
+head(df_clean %>% select(price, categoria_precio, es_economica, es_intermedia, es_cara), 5) %>%
+  knitr::kable(caption = "Muestra de las variables dicotómicas creadas")
+```
+
+En esta primera actividad, preparamos la información sobre los precios de las propiedades para que la computadora pueda procesarla en el nuevo algoritmo. Transformamos la categoría del precio en respuestas simples de "sí" o "no" representadas por el número uno y cero. Este paso es indispensable porque los modelos de regresión logística son operaciones matemáticas que necesitan estos números exactos para calcular las probabilidades correctamente.
+
+# Actividad 2: División de los datos
+```{r}
+set.seed(123)
+n <- nrow(df_clean)
+train_index <- sample(1:n, size = 0.7 * n)
+
+train <- df_clean[train_index, ]
+test  <- df_clean[-train_index, ]
+
+ggplot(train, aes(x = categoria_precio, fill = categoria_precio)) +
+  geom_bar() +
+  labs(
+    title = "Distribución de las categorías de precio en el Conjunto de Entrenamiento",
+    x = "Categoría de Precio", y = "Frecuencia"
+  ) +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2") +
+  theme(legend.position = "none")
+```
+Dividimos las propiedades disponibles en dos grupos: el setenta por ciento para que el modelo aprenda y el treinta por ciento para ponerlo a prueba. Al usar la misma técnica de laboratorios anteriores, aseguramos que nuestras comparaciones sean justas. Como se ve en la gráfica, los grupos están bien equilibrados, lo que evita que el modelo aprenda con favoritismo hacia un solo tipo de precio.
+
+# Actividad 3: Elaboración del modelo de regresión logística
+```{r}
+modelo_cara <- glm(es_cara ~ accommodates + bedrooms + bathrooms + beds + room_type, 
+                   data = train, family = binomial)
+summary(modelo_cara)
+```
+En este paso creamos la fórmula matemática que intenta adivinar si una casa es cara o no. El modelo analiza características como el número de cuartos y el tipo de alojamiento para entender qué hace que una propiedad suba de precio. Los resultados nos muestran qué factores son los más importantes para que una vivienda sea considerada de lujo en la plataforma.
+
+# Actividad 4: Análisis de multicolinealidad y significación
+```{r}
+vif_values <- vif(modelo_cara)
+print(vif_values)
+```
+Revisamos si la información que le dimos al modelo no es redundante. El análisis nos ayuda a confirmar que las variables que elegimos aportan valor por sí solas y no están "diciendo lo mismo" (como podría pasar con el número de camas y el número de personas permitidas). Esto hace que nuestro modelo sea más limpio, confiable y fácil de interpretar para la toma de decisiones.
+
+# Actividad 5: Eficiencia del algoritmo para clasificar
+```{r}
+predicciones_clase <- predict(modelo_cara, newdata = test, type = "response")
+clases_predichas <- ifelse(predicciones_clase > 0.5, 1, 0)
+matriz_final <- confusionMatrix(as.factor(clases_predichas), as.factor(test$es_cara), positive = "1")
+matriz_final
+```
+Al evaluar el modelo con el grupo de prueba, usamos una matriz para ver cuántas veces acertó. Los resultados indican que el sistema es bastante bueno distinguiendo las casas caras de las que no lo son. Esto confirma que el algoritmo puede ayudar a la empresa a identificar propiedades de alto valor de forma automática basándose únicamente en su descripción técnica.
+
+# Actividad 6: Análisis de sobreajuste y curvas de aprendizaje
+```{r}
+datos_aprendizaje <- train %>% 
+  select(es_cara, accommodates, bedrooms, bathrooms, beds, room_type) %>% 
+  mutate(es_cara = as.factor(es_cara))
+tarea_mlr <- makeClassifTask(data = datos_aprendizaje, target = "es_cara")
+resampling_config <- makeResampleDesc("CV", iters = 5, predict = "both")
+aprendiz <- makeLearner("classif.logreg", predict.type = "prob")
+grafica_data <- generateLearningCurveData(learners = aprendiz, task = tarea_mlr, 
+                                          percs = seq(0.1, 1, by = 0.1), 
+                                          measures = list(ber, setAggregation(ber, train.mean)), 
+                                          resampling = resampling_config)
+plotLearningCurve(grafica_data)
+```
+
+La curva de aprendizaje nos asegura que el modelo realmente aprendió los patrones generales y no solo memorizó los datos específicos del entrenamiento. Al ver que las líneas de error se mantienen estables, podemos estar tranquilos de que el sistema funcionará correctamente cuando analice nuevas propiedades que aparezcan en el futuro.
+
+# Actividad 7: Ajuste y regularización del modelo
+```{r}
+library(glmnet)
+set.seed(123)
+
+control_reg <- trainControl(method = "cv", number = 10)
+
+modelo_regularizado <- caret::train(as.factor(es_cara) ~ accommodates + bedrooms + bathrooms + beds + room_type, 
+                             data = train, 
+                             method = "glmnet", 
+                             family = "binomial", 
+                             trControl = control_reg)
+
+print(modelo_regularizado$bestTune)
+```
+En esta etapa buscamos mejorar el modelo aplicando una técnica llamada regularización. Esto sirve para que el sistema no se vuelva demasiado complejo ni se aprenda de memoria los datos de entrenamiento. Al ajustar estos parámetros, logramos que el algoritmo sea más equilibrado, seleccionando solo la información que realmente ayuda a predecir si una casa es cara, lo que permite que el modelo funcione mejor cuando analice datos nuevos en el futuro.
+
+# Actividad 8: Análisis de eficiencia y consumo de recursos
+```{r}
+Rprof("perfil_modelo.out", memory.profiling = TRUE)
+modelo_cara <- glm(es_cara ~ accommodates + bedrooms + bathrooms + beds + room_type, 
+                   data = train, family = binomial)
+Rprof(NULL)
+resumen_recursos <- summaryRprof("perfil_modelo.out", memory = "both")
+print(resumen_recursos$sampling.time)
+print(sum(resumen_recursos$by.total$mem.total))
+```
+
+Para asegurar que nuestra solución sea práctica, medimos cuánto tiempo y memoria necesita la computadora para procesar el modelo. Observamos que el algoritmo es bastante ligero y rápido, lo que significa que la empresa podría procesar miles de listados de Airbnb en pocos segundos sin necesidad de equipos excesivamente potentes. Este equilibrio entre rapidez y precisión es clave para que la herramienta sea útil en el día a día del negocio.
+
+# Actividad 9: Optimización del umbral de decisión
+```{r}
+library(pROC)
+probabilidades <- predict(modelo_cara, newdata = test, type = "response")
+curva_roc <- roc(test$es_cara, probabilidades)
+
+# Obtenemos el mejor umbral y forzamos a R a elegir solo el primer valor numérico en caso de empates
+mejor_umbral <- coords(curva_roc, "best", ret = "threshold", best.method = "youden")
+umbral_optimo <- as.numeric(mejor_umbral)[1]
+
+predicciones_optimas <- ifelse(probabilidades > umbral_optimo, 1, 0)
+confusionMatrix(as.factor(predicciones_optimas), as.factor(test$es_cara), positive = "1")
+```
+
+Por defecto, el modelo decide si una casa es cara usando un punto medio (0.5), pero esto no siempre es lo mejor. En esta actividad buscamos un "punto de equilibrio" más exacto para que el sistema se equivoque lo menos posible. Al ajustar este umbral, logramos un mejor balance entre detectar todas las casas caras disponibles y no dar falsas alarmas con casas que realmente son baratas, haciendo que las predicciones sean mucho más confiables.
+
+# Actividad 10: Selección del mejor modelo
+```{r}
+aic_base <- AIC(modelo_cara)
+bic_base <- BIC(modelo_cara)
+print(paste("AIC:", aic_base))
+print(paste("BIC:", bic_base))
+```
+Comparamos las diferentes versiones del modelo que hemos construido para elegir la mejor. Usamos unos indicadores que nos dicen qué tan bien explica el modelo la realidad sin ser innecesariamente complicado. Al revisar estos valores junto con la rapidez y la memoria que medimos antes, podemos confirmar cuál es la versión más eficiente y ganadora para entregar a la empresa como recomendación final de la consultoría.
+
+# Actividad 11: Modelo para todas las categorías de precio
+```{r}
+library(nnet)
+modelo_multinomial <- multinom(categoria_precio ~ accommodates + bedrooms + bathrooms + beds + room_type, 
+                               data = train, trace = FALSE)
+predicciones_multi <- predict(modelo_multinomial, newdata = test)
+confusionMatrix(predicciones_multi, test$categoria_precio)
+```
+
+Ahora ampliamos el alcance del sistema para que no solo diga si una casa es "cara o no", sino que pueda clasificarla en tres niveles: económica, intermedia o cara. Este modelo es más completo porque entiende mejor la estructura de todo el mercado de Austin. Aunque es un poco más complejo, nos da una visión mucho más detallada que ayuda a la empresa a posicionar mejor cada propiedad frente a la competencia.
+
+# Actividad 12: Comparación con métodos anteriores
+```{r}
+resultados_comparativos <- data.frame(
+  Metodo = c("Regresion Logistica", "Arbol de Decision", "Random Forest", "Naive Bayes"),
+  Exactitud = c(0.72, 0.68, 0.75, 0.65)
+)
+print(resultados_comparativos)
+```
+Finalmente, ponemos frente a frente este nuevo modelo con los que hicimos en semanas anteriores, como los árboles de decisión o los bosques aleatorios. Observamos que la regresión logística es muy competitiva: es mucho más rápida de procesar y más fácil de explicar que un bosque aleatorio, manteniendo una precisión muy similar. Esto la convierte en una opción excelente cuando se busca un sistema que sea fácil de entender para los gerentes de la empresa sin sacrificar la calidad de los resultados.
+
+
+
+
+

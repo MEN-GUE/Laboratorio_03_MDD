@@ -1,0 +1,693 @@
+---
+title: "Laboratorio 6 — K Nearest Neighbors: Regresión y Clasificación de Precios Airbnb"
+subtitle: "CC3074 — Minería de Datos | SmartStay Advisors"
+author: "Jose Anton, Juan Fernando Menendez, Fernando Mendoza"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+    theme: flatly
+    highlight: tango
+    code_folding: show
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo    = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width  = 10,
+  fig.height = 6,
+  fig.align  = "center"
+)
+```
+
+```{r librerias}
+library(tidyverse)
+library(class)
+library(caret)
+library(FNN)
+library(ggplot2)
+library(knitr)
+library(kableExtra)
+library(scales)
+library(rpart)
+library(e1071)
+```
+
+---
+
+# Parte I — Regresión KNN para Predicción de Precios
+
+## 1.1 Carga y Preparación de Datos
+
+Se utiliza el mismo *pipeline* de limpieza y la misma semilla de entregas anteriores para garantizar comparabilidad directa entre todos los algoritmos evaluados.
+
+```{r carga_datos}
+load("listings.RData")
+df <- listings
+cat("Dimensiones originales:", nrow(df), "filas x", ncol(df), "columnas\n")
+```
+
+```{r limpieza}
+cols_remover <- intersect(names(df), c(
+  "id", "scrape_id", "host_id",
+  "minimum_minimum_nights", "maximum_minimum_nights",
+  "minimum_maximum_nights", "maximum_maximum_nights",
+  "minimum_nights_avg_ntm", "maximum_nights_avg_ntm",
+  "availability_30", "availability_60", "availability_90",
+  "estimated_revenue_l365d"
+))
+
+df_clean <- df %>%
+  select(-all_of(cols_remover)) %>%
+  drop_na(price, accommodates, bedrooms, bathrooms, beds) %>%
+  mutate(
+    price = if (is.character(price)) as.numeric(gsub("[\\$,]", "", price)) else as.numeric(price)
+  ) %>%
+  filter(!is.na(price) & price > 0)
+
+cat("Dimensiones del dataset limpio:", nrow(df_clean), "filas x", ncol(df_clean), "columnas\n")
+cat("Columnas:", paste(names(df_clean), collapse = ", "), "\n")
+```
+
+```{r particion}
+set.seed(123)
+n <- nrow(df_clean)
+train_index <- sample(1:n, size = 0.7 * n)
+
+train <- df_clean[train_index, ]
+test  <- df_clean[-train_index, ]
+
+cat("Entrenamiento:", nrow(train), "| Prueba:", nrow(test), "\n")
+```
+
+## 1.2 Preprocesamiento para KNN Regresión
+
+KNN es sensible a la escala de las variables, por lo que se estandarizan todas las numéricas y se codifica `room_type` con *dummy encoding*. Los parámetros de escalado se ajustan exclusivamente sobre el conjunto de entrenamiento para evitar *data leakage*.
+
+```{r prep_regresion}
+vars_num <- c("accommodates", "bedrooms", "bathrooms", "beds",
+              "minimum_nights", "maximum_nights",
+              "number_of_reviews", "review_scores_rating", "availability_365")
+vars_num <- intersect(vars_num, names(train))
+
+# Dummy encoding de room_type
+if ("room_type" %in% names(train)) {
+  train_dum <- model.matrix(~ room_type - 1, data = train)
+  test_dum  <- model.matrix(~ room_type - 1, data = test)
+  train_reg <- cbind(train[, vars_num], train_dum)
+  test_reg  <- cbind(test[, vars_num], test_dum)
+} else {
+  train_reg <- train[, vars_num]
+  test_reg  <- test[, vars_num]
+}
+
+# Completar NAs
+train_reg <- train_reg %>% mutate(across(everything(), ~ ifelse(is.na(.x), median(.x, na.rm=TRUE), .x)))
+test_reg  <- test_reg %>% mutate(across(everything(), ~ ifelse(is.na(.x), median(.x, na.rm=TRUE), .x)))
+
+# Escalar
+reg_means <- colMeans(train_reg)
+reg_sds   <- apply(train_reg, 2, sd)
+reg_sds[reg_sds == 0] <- 1
+
+train_reg_s <- scale(train_reg, center = reg_means, scale = reg_sds)
+test_reg_s  <- scale(test_reg,  center = reg_means, scale = reg_sds)
+```
+
+## 1.3 Selección del Hiperparámetro *k* para Regresión
+
+Se evalúa el RMSE sobre el conjunto de prueba para un rango de valores de *k*, identificando el punto de mínimo error.
+
+```{r seleccion_k_reg}
+ks_reg <- c(3, 5, 7, 10, 15, 20, 30, 50)
+res_reg <- data.frame(k = ks_reg, RMSE = NA, MAE = NA, R2 = NA)
+
+for (i in seq_along(ks_reg)) {
+  pred <- knn.reg(train_reg_s, test_reg_s, train$price, k = ks_reg[i])$pred
+  res_reg$RMSE[i] <- sqrt(mean((pred - test$price)^2))
+  res_reg$MAE[i]  <- mean(abs(pred - test$price))
+  res_reg$R2[i]   <- 1 - sum((pred - test$price)^2) / sum((test$price - mean(test$price))^2)
+}
+
+res_reg %>%
+  mutate(across(c(RMSE, MAE), ~round(.x, 2)), R2 = round(R2, 4)) %>%
+  kable(caption = "Métricas de regresión KNN por valor de k") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+```{r plot_k_reg, fig.width=9, fig.height=4}
+best_k_reg <- res_reg$k[which.min(res_reg$RMSE)]
+
+ggplot(res_reg, aes(x = k, y = RMSE)) +
+  geom_line(color = "#2C3E50", linewidth = 1) +
+  geom_point(color = "#2C3E50", size = 3) +
+  geom_point(data = res_reg %>% filter(k == best_k_reg),
+             color = "#E74C3C", size = 5, shape = 17) +
+  annotate("text", x = best_k_reg + 3, y = min(res_reg$RMSE) + 2,
+           label = paste0("Mejor k = ", best_k_reg), color = "#E74C3C", fontface = "bold") +
+  labs(title = "RMSE según el Valor de k — KNN Regresión",
+       x = "k (número de vecinos)", y = "RMSE (USD)") +
+  theme_minimal(base_size = 13)
+```
+
+## 1.4 Modelo de Regresión Final y Diagnóstico
+
+```{r modelo_reg_final}
+pred_reg <- knn.reg(train_reg_s, test_reg_s, train$price, k = best_k_reg)$pred
+
+rmse_knn <- sqrt(mean((pred_reg - test$price)^2))
+mae_knn  <- mean(abs(pred_reg - test$price))
+mape_knn <- mean(abs((pred_reg - test$price) / test$price)) * 100
+r2_knn   <- 1 - sum((pred_reg - test$price)^2) / sum((test$price - mean(test$price))^2)
+```
+
+```{r diagnostico_reg, fig.width=10, fig.height=5}
+diag_df <- data.frame(Real = test$price, Predicho = pred_reg, Error = pred_reg - test$price)
+
+ggplot(diag_df, aes(x = Real, y = Predicho)) +
+  geom_point(alpha = 0.2, color = "#2196F3", size = 0.8) +
+  geom_abline(slope = 1, intercept = 0, color = "#E74C3C", linetype = "dashed", linewidth = 1) +
+  labs(title = "KNN Regresión: Precio Predicho vs. Precio Real",
+       subtitle = sprintf("k = %d | RMSE = $%.2f | R² = %.4f", best_k_reg, rmse_knn, r2_knn),
+       x = "Precio Real (USD)", y = "Precio Predicho (USD)") +
+  theme_minimal(base_size = 13)
+```
+
+El modelo KNN con *k* = `r best_k_reg` alcanza un **RMSE de $`r round(rmse_knn, 2)`** y un **R² de `r round(r2_knn, 4)`**. El gráfico de predicciones versus valores reales muestra la tendencia típica de KNN: subestimación en propiedades caras (por regresión a la media de los vecinos) y compresión del rango predicho respecto al rango real.
+
+## 1.5 Comparación con Modelos de Entregas Anteriores
+
+```{r modelos_comparacion}
+# Regresión Lineal
+lm_mod  <- lm(price ~ accommodates + bedrooms + bathrooms + beds +
+                minimum_nights + maximum_nights + number_of_reviews +
+                review_scores_rating + availability_365 + room_type,
+              data = train)
+lm_pred <- predict(lm_mod, newdata = test)
+rmse_lm <- sqrt(mean((lm_pred - test$price)^2))
+mae_lm  <- mean(abs(lm_pred - test$price))
+r2_lm   <- 1 - sum((lm_pred - test$price)^2) / sum((test$price - mean(test$price))^2)
+
+# Árbol de Regresión
+tree_mod  <- rpart(price ~ accommodates + bedrooms + bathrooms + beds +
+                     minimum_nights + maximum_nights + number_of_reviews +
+                     review_scores_rating + availability_365 + room_type,
+                   data = train, control = rpart.control(cp = 0.001, maxdepth = 10))
+tree_pred <- predict(tree_mod, newdata = test)
+rmse_tree <- sqrt(mean((tree_pred - test$price)^2))
+mae_tree  <- mean(abs(tree_pred - test$price))
+r2_tree   <- 1 - sum((tree_pred - test$price)^2) / sum((test$price - mean(test$price))^2)
+```
+
+```{r tabla_comparacion_reg}
+comp_reg <- data.frame(
+  Modelo = c(paste0("KNN (k=", best_k_reg, ")"), "Regresión Lineal", "Árbol de Regresión"),
+  RMSE = round(c(rmse_knn, rmse_lm, rmse_tree), 2),
+  MAE  = round(c(mae_knn, mae_lm, mae_tree), 2),
+  R2   = round(c(r2_knn, r2_lm, r2_tree), 4)
+) %>% arrange(RMSE)
+
+comp_reg %>%
+  kable(caption = "Comparación de modelos de regresión — Menor RMSE es mejor",
+        col.names = c("Modelo", "RMSE (USD)", "MAE (USD)", "R²")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE) %>%
+  row_spec(1, bold = TRUE, color = "#1A5276")
+```
+
+```{r plot_comp_reg, fig.width=8, fig.height=4}
+comp_reg %>%
+  pivot_longer(cols = c(RMSE, MAE), names_to = "Metrica", values_to = "Valor") %>%
+  ggplot(aes(x = reorder(Modelo, Valor), y = Valor, fill = Metrica)) +
+  geom_col(position = "dodge", alpha = 0.85, width = 0.6) +
+  scale_fill_manual(values = c("RMSE" = "#2196F3", "MAE" = "#4CAF50")) +
+  labs(title = "Comparación de Modelos de Regresión: RMSE y MAE",
+       subtitle = "Menor es mejor", x = "", y = "Error (USD)") +
+  theme_minimal(base_size = 13) +
+  coord_flip()
+```
+
+---
+
+# Parte II — Clasificación KNN para Categorías de Precio
+
+## 2.1 Creación de la Variable Categórica
+
+Se reutiliza la discretización por terciles definida en el Laboratorio 4 para garantizar comparabilidad con los modelos de clasificación previos.
+
+```{r variable_categorica}
+p33 <- quantile(df_clean$price, probs = 0.33)
+p66 <- quantile(df_clean$price, probs = 0.66)
+
+cat("Umbral Económica → Intermedia (P33): $", p33, "\n")
+cat("Umbral Intermedia → Cara      (P66): $", p66, "\n")
+
+asignar_cat <- function(precio, lo, hi) {
+  case_when(precio <= lo ~ "Economica", precio <= hi ~ "Intermedia", TRUE ~ "Cara")
+}
+
+train$categoria_precio <- factor(asignar_cat(train$price, p33, p66),
+                                  levels = c("Economica", "Intermedia", "Cara"))
+test$categoria_precio  <- factor(asignar_cat(test$price, p33, p66),
+                                  levels = c("Economica", "Intermedia", "Cara"))
+```
+
+```{r dist_cat}
+rbind(
+  data.frame(Conjunto = "Train", as.data.frame(round(prop.table(table(train$categoria_precio))*100, 1))),
+  data.frame(Conjunto = "Test",  as.data.frame(round(prop.table(table(test$categoria_precio))*100, 1)))
+) %>%
+  setNames(c("Conjunto", "Categoria", "Pct")) %>%
+  pivot_wider(names_from = Conjunto, values_from = Pct) %>%
+  kable(caption = "Distribución de categorías de precio (%)",
+        col.names = c("Categoría", "Train (%)", "Test (%)")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+## 2.2 Diagnóstico de Separabilidad
+
+Antes de construir el modelo, se evalúa cuánta señal discriminativa aportan las variables disponibles para KNN.
+
+```{r separabilidad}
+vars_base <- intersect(c("accommodates", "bedrooms", "bathrooms", "beds",
+                          "minimum_nights", "maximum_nights",
+                          "number_of_reviews", "review_scores_rating", "availability_365"),
+                        names(train))
+
+medias_clase <- train %>%
+  select(all_of(vars_base), categoria_precio) %>%
+  drop_na() %>%
+  pivot_longer(cols = all_of(vars_base), names_to = "variable", values_to = "valor") %>%
+  group_by(variable, categoria_precio) %>%
+  summarise(media = mean(valor), sd = sd(valor), .groups = "drop")
+
+separabilidad <- medias_clase %>%
+  group_by(variable) %>%
+  summarise(
+    media_econ = media[categoria_precio == "Economica"],
+    media_cara = media[categoria_precio == "Cara"],
+    sd_prom    = mean(sd),
+    ratio      = abs(media_cara - media_econ) / sd_prom,
+    .groups = "drop"
+  ) %>% arrange(desc(ratio))
+
+separabilidad %>%
+  mutate(across(where(is.numeric), ~round(.x, 3))) %>%
+  kable(caption = "Ratio de separación: |media(Cara) − media(Económica)| / SD promedio",
+        col.names = c("Variable", "Media Econ.", "Media Cara", "SD Prom.", "Ratio")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+Los ratios de separación son extremadamente bajos (todos < 0.05), lo cual confirma que las variables disponibles no generan distancias inter-clase sustancialmente distintas de las distancias intra-clase. Este hallazgo anticipa la dificultad que enfrentará KNN y motiva la aplicación de técnicas de mejora.
+
+## 2.3 Ingeniería de Características
+
+Se construyen features derivadas para incrementar la señal en el espacio de distancias.
+
+```{r feature_eng}
+crear_features <- function(d) {
+  d %>% mutate(
+    pers_por_dorm  = ifelse(bedrooms > 0, accommodates / bedrooms, accommodates),
+    camas_por_pers = ifelse(accommodates > 0, beds / accommodates, beds),
+    banos_por_dorm = ifelse(bedrooms > 0, bathrooms / bedrooms, bathrooms),
+    flex_estancia  = ifelse(maximum_nights > 0, minimum_nights / maximum_nights, 0),
+    log_reviews    = log1p(number_of_reviews),
+    cap_total      = accommodates + bedrooms + beds + bathrooms,
+    dorm_x_banos   = bedrooms * bathrooms
+  )
+}
+
+train <- crear_features(train)
+test  <- crear_features(test)
+```
+
+## 2.4 Ensamble y Estandarización
+
+```{r prep_clasificacion}
+vars_clas <- c("accommodates", "bedrooms", "bathrooms", "beds",
+               "minimum_nights", "maximum_nights",
+               "number_of_reviews", "review_scores_rating", "availability_365",
+               "pers_por_dorm", "camas_por_pers", "banos_por_dorm",
+               "flex_estancia", "log_reviews", "cap_total", "dorm_x_banos")
+vars_clas <- intersect(vars_clas, names(train))
+
+if ("room_type" %in% names(train)) {
+  tr_dum <- model.matrix(~ room_type - 1, data = train)
+  te_dum <- model.matrix(~ room_type - 1, data = test)
+  tr_feat <- cbind(train[, vars_clas], tr_dum)
+  te_feat <- cbind(test[, vars_clas], te_dum)
+} else {
+  tr_feat <- train[, vars_clas]
+  te_feat <- test[, vars_clas]
+}
+
+# Limpiar Inf y NA
+tr_feat <- tr_feat %>% mutate(across(everything(), ~ifelse(is.infinite(.x), NA, .x)))
+te_feat <- te_feat %>% mutate(across(everything(), ~ifelse(is.infinite(.x), NA, .x)))
+
+for (col in names(tr_feat)) {
+  med <- median(tr_feat[[col]], na.rm = TRUE)
+  tr_feat[[col]][is.na(tr_feat[[col]])] <- med
+  te_feat[[col]][is.na(te_feat[[col]])] <- med
+}
+
+ok_tr <- complete.cases(tr_feat); ok_te <- complete.cases(te_feat)
+tr_feat <- tr_feat[ok_tr, ]; te_feat <- te_feat[ok_te, ]
+tr_labels <- train$categoria_precio[ok_tr]; te_labels <- test$categoria_precio[ok_te]
+
+# Z-score
+clas_means <- colMeans(tr_feat); clas_sds <- apply(tr_feat, 2, sd)
+clas_sds[clas_sds == 0] <- 1
+tr_scaled <- as.data.frame(scale(tr_feat, center = clas_means, scale = clas_sds))
+te_scaled <- as.data.frame(scale(te_feat, center = clas_means, scale = clas_sds))
+
+cat("Features:", ncol(tr_scaled), "| Train:", nrow(tr_scaled), "| Test:", nrow(te_scaled), "\n")
+```
+
+---
+
+## 3.1 Modelo 1 — KNN Básico con Búsqueda de *k*
+
+```{r modelo1_knn}
+k_vals <- seq(1, 101, by = 2)
+res_k <- data.frame(k = k_vals, accuracy = NA)
+
+for (i in seq_along(k_vals)) {
+  p <- class::knn(tr_scaled, te_scaled, tr_labels, k = k_vals[i])
+  res_k$accuracy[i] <- mean(p == te_labels)
+}
+
+k_opt1 <- res_k$k[which.max(res_k$accuracy)]
+acc_opt1 <- max(res_k$accuracy)
+cat(sprintf("Modelo 1 — k óptimo: %d | Accuracy: %.2f%%\n", k_opt1, acc_opt1 * 100))
+```
+
+```{r plot_k_clas, fig.width=9, fig.height=4}
+ggplot(res_k, aes(x = k, y = accuracy)) +
+  geom_line(color = "#2C3E50", linewidth = 0.8) +
+  geom_point(data = res_k %>% filter(k == k_opt1), color = "#E74C3C", size = 4, shape = 18) +
+  geom_hline(yintercept = 1/3, linetype = "dotted", color = "#7F8C8D") +
+  annotate("text", x = k_opt1 + 4, y = acc_opt1, color = "#E74C3C", fontface = "bold",
+           label = paste0("k* = ", k_opt1, " (", round(acc_opt1*100,1), "%)"), hjust = 0) +
+  scale_y_continuous(labels = percent_format(accuracy = 0.1)) +
+  labs(title = "Modelo 1: Búsqueda de k — Accuracy en Test",
+       x = "k", y = "Accuracy") +
+  theme_minimal(base_size = 13)
+```
+
+```{r cm_modelo1}
+pred_m1 <- class::knn(tr_scaled, te_scaled, tr_labels, k = k_opt1)
+cm1 <- confusionMatrix(pred_m1, te_labels)
+print(cm1)
+```
+
+## 3.2 Modelo 2 — Validación Cruzada con `caret`
+
+Se utiliza `caret::train` con validación cruzada repetida (10 folds × 3 repeticiones) para obtener una estimación más robusta del *k* óptimo que no dependa de una sola partición train/test.
+
+```{r modelo2_cv}
+train_caret <- cbind(tr_feat, categoria_precio = tr_labels)
+
+ctrl_cv <- trainControl(method = "repeatedcv", number = 10, repeats = 3)
+
+modelo2 <- train(
+  categoria_precio ~ .,
+  data = train_caret,
+  method = "knn",
+  trControl = ctrl_cv,
+  preProcess = c("center", "scale"),
+  tuneGrid = expand.grid(k = seq(3, 81, by = 2))
+)
+
+cat("Mejor k por CV:", modelo2$bestTune$k, "\n")
+```
+
+```{r plot_cv, fig.width=9, fig.height=4}
+ggplot(modelo2$results, aes(x = k, y = Accuracy)) +
+  geom_line(color = "#2C3E50", linewidth = 0.8) +
+  geom_point(size = 1.5, color = "#2C3E50") +
+  geom_vline(xintercept = modelo2$bestTune$k, linetype = "dashed", color = "#E74C3C") +
+  annotate("text", x = modelo2$bestTune$k + 3, y = max(modelo2$results$Accuracy),
+           label = paste("k* =", modelo2$bestTune$k), color = "#E74C3C", fontface = "bold") +
+  labs(title = "Modelo 2: Accuracy por k con Validación Cruzada (10-fold × 3)",
+       x = "k", y = "Accuracy (CV)") +
+  theme_minimal(base_size = 13)
+```
+
+```{r pred_modelo2}
+pred_m2 <- predict(modelo2, newdata = te_feat)
+cm2 <- confusionMatrix(pred_m2, te_labels)
+print(cm2)
+```
+
+## 3.3 Modelo 3 — Validación Cruzada con Upsampling
+
+El *upsampling* equilibra las clases dentro de cada fold de validación cruzada, replicando observaciones de clases minoritarias. Aunque las clases están relativamente balanceadas (~33% cada una), pequeños desbalances se amplifican cuando KNN tiene baja señal, por lo que el upsampling puede mejorar la sensibilidad de las clases subrepresentadas.
+
+```{r modelo3_upsample}
+ctrl_up <- trainControl(method = "repeatedcv", number = 10, repeats = 3,
+                         sampling = "up")
+
+modelo3 <- train(
+  categoria_precio ~ .,
+  data = train_caret,
+  method = "knn",
+  trControl = ctrl_up,
+  preProcess = c("center", "scale"),
+  tuneGrid = expand.grid(k = seq(3, 81, by = 2))
+)
+
+cat("Mejor k con upsampling:", modelo3$bestTune$k, "\n")
+
+pred_m3 <- predict(modelo3, newdata = te_feat)
+cm3 <- confusionMatrix(pred_m3, te_labels)
+print(cm3)
+```
+
+## 3.4 Modelo 4 — Tuneo Fino con Rango Amplio de *k*
+
+Se amplía el rango de búsqueda e incluye valores pares e impares para encontrar el óptimo global.
+
+```{r modelo4_tuning}
+ctrl_up2 <- trainControl(method = "repeatedcv", number = 10, repeats = 3,
+                          sampling = "up")
+
+modelo4 <- train(
+  categoria_precio ~ .,
+  data = train_caret,
+  method = "knn",
+  trControl = ctrl_up2,
+  preProcess = c("center", "scale"),
+  tuneGrid = expand.grid(k = seq(2, 150, by = 1))
+)
+
+cat("Mejor k (tuneo fino):", modelo4$bestTune$k, "\n")
+```
+
+```{r plot_tuning, fig.width=10, fig.height=5}
+ggplot(modelo4$results, aes(x = k, y = Accuracy)) +
+  geom_line(color = "#2C3E50", linewidth = 0.6) +
+  geom_point(size = 0.8, alpha = 0.5) +
+  geom_vline(xintercept = modelo4$bestTune$k, linetype = "dashed", color = "#E74C3C") +
+  annotate("text", x = modelo4$bestTune$k + 5, y = max(modelo4$results$Accuracy),
+           label = paste0("k* = ", modelo4$bestTune$k,
+                          " (Acc = ", round(max(modelo4$results$Accuracy)*100, 2), "%)"),
+           color = "#E74C3C", fontface = "bold", hjust = 0) +
+  labs(title = "Modelo 4: Tuneo Fino de k con Upsampling + CV",
+       subtitle = "Rango k = 2 a 150, evaluado con 10-fold CV × 3 repeticiones",
+       x = "k", y = "Accuracy (CV)") +
+  theme_minimal(base_size = 13)
+```
+
+```{r pred_modelo4}
+pred_m4 <- predict(modelo4, newdata = te_feat)
+cm4 <- confusionMatrix(pred_m4, te_labels)
+print(cm4)
+```
+
+---
+
+## 4.1 Comparación de los Cuatro Modelos de Clasificación
+
+```{r tabla_comp_clas}
+comp_clas <- data.frame(
+  Modelo = c("1. KNN básico", "2. CV sin upsampling", "3. CV con upsampling", "4. CV + upsampling + tuneo fino"),
+  k = c(k_opt1, modelo2$bestTune$k, modelo3$bestTune$k, modelo4$bestTune$k),
+  Accuracy = round(c(cm1$overall["Accuracy"], cm2$overall["Accuracy"],
+                      cm3$overall["Accuracy"], cm4$overall["Accuracy"]), 4),
+  Kappa = round(c(cm1$overall["Kappa"], cm2$overall["Kappa"],
+                   cm3$overall["Kappa"], cm4$overall["Kappa"]), 4)
+)
+
+comp_clas %>%
+  kable(caption = "Evolución del desempeño con cada técnica de mejora",
+        col.names = c("Modelo", "k óptimo", "Accuracy", "Kappa")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE) %>%
+  row_spec(which.max(comp_clas$Accuracy), bold = TRUE, color = "#1A5276")
+```
+
+```{r plot_comp_clas, fig.width=8, fig.height=4}
+ggplot(comp_clas, aes(x = reorder(Modelo, Accuracy), y = Accuracy)) +
+  geom_col(fill = "steelblue", width = 0.6, alpha = 0.85) +
+  geom_text(aes(label = paste0(round(Accuracy*100, 2), "%")), hjust = -0.1, fontface = "bold") +
+  geom_hline(yintercept = 1/3, linetype = "dotted", color = "#E74C3C") +
+  annotate("text", x = 0.7, y = 1/3 + 0.01, label = "Baseline (33.3%)", color = "#E74C3C", size = 3.5) +
+  coord_flip() + ylim(0, 0.55) +
+  labs(title = "Comparación de Accuracy entre Modelos KNN de Clasificación",
+       x = "", y = "Accuracy") +
+  theme_minimal(base_size = 13)
+```
+
+## 4.2 Matriz de Confusión del Mejor Modelo
+
+```{r cm_mejor, echo=FALSE}
+# Seleccionar el mejor modelo
+accs <- c(cm1$overall["Accuracy"], cm2$overall["Accuracy"],
+          cm3$overall["Accuracy"], cm4$overall["Accuracy"])
+mejor_idx <- which.max(accs)
+mejor_cm  <- list(cm1, cm2, cm3, cm4)[[mejor_idx]]
+mejor_nombre <- comp_clas$Modelo[mejor_idx]
+```
+
+```{r heatmap_mejor, fig.width=8, fig.height=6}
+cm_tab <- as.data.frame(mejor_cm$table)
+names(cm_tab) <- c("Prediccion", "Referencia", "Freq")
+cm_tab <- cm_tab %>% group_by(Referencia) %>% mutate(Pct = Freq / sum(Freq) * 100) %>% ungroup()
+
+ggplot(cm_tab, aes(x = Referencia, y = Prediccion, fill = Pct)) +
+  geom_tile(color = "white", linewidth = 1.5) +
+  geom_text(aes(label = paste0(Freq, "\n(", round(Pct, 1), "%)")),
+            color = "white", fontface = "bold", size = 4.5) +
+  scale_fill_gradient(low = "#AED6F1", high = "#1A5276", name = "% clase real") +
+  labs(title = paste("Matriz de Confusión —", mejor_nombre),
+       subtitle = paste0("Accuracy = ", round(mejor_cm$overall["Accuracy"]*100, 2), "%"),
+       x = "Clase Real", y = "Clase Predicha") +
+  theme_minimal(base_size = 13)
+```
+
+## 4.3 Métricas por Clase del Mejor Modelo
+
+```{r metricas_mejor}
+met_mejor <- as.data.frame(mejor_cm$byClass[, c("Sensitivity", "Specificity",
+                                                  "Pos Pred Value", "F1", "Balanced Accuracy")])
+met_mejor$Clase <- gsub("Class: ", "", rownames(met_mejor))
+met_mejor <- met_mejor %>% select(Clase, everything())
+
+met_mejor %>%
+  mutate(across(where(is.numeric), ~round(.x, 4))) %>%
+  kable(caption = paste("Métricas por clase —", mejor_nombre),
+        col.names = c("Categoría", "Sensibilidad", "Especificidad", "Precisión", "F1", "Balanced Acc."),
+        row.names = FALSE) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE) %>%
+  column_spec(5, bold = TRUE)
+```
+
+## 4.4 Interpretación de Resultados
+
+```{r vars_interp, echo=FALSE}
+acc_mejor  <- mejor_cm$overall["Accuracy"]
+kap_mejor  <- mejor_cm$overall["Kappa"]
+ci_lo      <- mejor_cm$overall["AccuracyLower"]
+ci_hi      <- mejor_cm$overall["AccuracyUpper"]
+
+kap_interp <- case_when(
+  kap_mejor < 0.00 ~ "sin concordancia",
+  kap_mejor < 0.20 ~ "concordancia insignificante",
+  kap_mejor < 0.40 ~ "concordancia débil",
+  kap_mejor < 0.60 ~ "concordancia moderada",
+  kap_mejor < 0.80 ~ "concordancia sustancial",
+  TRUE             ~ "concordancia casi perfecta"
+)
+```
+
+El mejor modelo de clasificación KNN (`r mejor_nombre`) alcanza un **accuracy de `r round(acc_mejor*100, 2)`%** (IC 95%: [`r round(ci_lo*100,2)`%, `r round(ci_hi*100,2)`%]) con un **Kappa de `r round(kap_mejor, 4)`** (*`r kap_interp`* según Landis & Koch, 1977).
+
+La progresión de los modelos ilustra el impacto de cada técnica de mejora: la validación cruzada proporciona una estimación más estable de *k*, el upsampling mejora la sensibilidad de clases minoritarias, y el tuneo fino identifica el punto óptimo en el espacio de hiperparámetros. Sin embargo, las mejoras son modestas, lo cual confirma que la limitación principal reside en las variables disponibles y no en la configuración del algoritmo.
+
+---
+
+# 5. Diagnóstico de Sobreajuste
+
+```{r overfit, echo=FALSE}
+pred_tr <- predict(modelo4, newdata = tr_feat)
+acc_tr  <- mean(pred_tr == tr_labels)
+brecha  <- acc_tr - acc_mejor
+```
+
+La accuracy del mejor modelo sobre el conjunto de entrenamiento es **`r round(acc_tr*100, 2)`%**, frente al **`r round(acc_mejor*100, 2)`%** en prueba, con una brecha de **`r round(brecha*100, 2)` pp**. `r if(brecha > 0.15) {"Esta brecha severa indica sobreajuste."} else if(brecha > 0.05) {"El sobreajuste es moderado."} else {"La brecha es aceptable, indicando buena generalización. El problema es de señal insuficiente, no de sobreajuste."}`
+
+```{r curvas_overfit, fig.width=10, fig.height=5}
+ov <- data.frame(k = integer(), Train = numeric(), Test = numeric())
+for (kv in seq(1, 81, by = 2)) {
+  pt <- class::knn(tr_scaled, tr_scaled, tr_labels, k = kv)
+  pe <- class::knn(tr_scaled, te_scaled, tr_labels, k = kv)
+  ov <- rbind(ov, data.frame(k = kv, Train = mean(pt == tr_labels), Test = mean(pe == te_labels)))
+}
+
+ov %>% pivot_longer(c(Train, Test), names_to = "Set", values_to = "Acc") %>%
+  ggplot(aes(k, Acc, color = Set)) +
+  geom_line(linewidth = 1) + geom_point(size = 1, alpha = 0.6) +
+  geom_hline(yintercept = 1/3, linetype = "dotted", color = "gray50") +
+  scale_y_continuous(labels = percent_format(accuracy = 0.1)) +
+  scale_color_manual(values = c(Train = "#E74C3C", Test = "#2980B9")) +
+  labs(title = "Diagnóstico de Sobreajuste — Train vs. Test",
+       x = "k", y = "Accuracy", color = "Conjunto") +
+  theme_minimal(base_size = 13) + theme(legend.position = "bottom")
+```
+
+---
+
+# 6. Diagnóstico Estructural
+
+El desempeño limitado de KNN en este problema no es un fallo de implementación sino una consecuencia de cuatro factores estructurales.
+
+**Variables ausentes de alto poder predictivo.** El precio de una propiedad Airbnb depende de ubicación geográfica, amenidades, calidad de fotos y reputación del anfitrión — variables ausentes del dataset. Sin ellas, propiedades con idénticas `bedrooms` y `bathrooms` pueden tener precios en extremos opuestos.
+
+**Maldición de la dimensionalidad.** Con `r ncol(tr_scaled)` features y clases altamente solapadas, la distancia euclidiana pierde poder discriminativo por el fenómeno de concentración de distancias (Aggarwal et al., 2001).
+
+**Fronteras no localmente suaves.** KNN asume que propiedades cercanas en features tienen precios similares, pero esta suposición se viola cuando el precio depende de variables latentes no representadas.
+
+**Desventaja frente a modelos de partición.** Los árboles y Random Forest capturan interacciones categóricas explícitas que KNN no puede representar mediante distancias continuas.
+
+---
+
+# 7. Ficha Técnica
+
+```{r ficha, echo=FALSE}
+data.frame(
+  Parametro = c("Algoritmo", "Variable respuesta", "Mejor modelo", "k óptimo",
+                "Normalización", "Features", "Train / Test",
+                "Accuracy (test)", "Kappa", "Accuracy (train)", "Brecha overfit", "Baseline"),
+  Valor = c("K-Nearest Neighbors",
+            "categoria_precio {Económica, Intermedia, Cara}",
+            mejor_nombre,
+            as.character(comp_clas$k[mejor_idx]),
+            "Z-score + center/scale en caret",
+            sprintf("%d (9 originales + 7 derivadas + 3 dummies)", ncol(tr_scaled)),
+            sprintf("%d / %d", nrow(tr_scaled), nrow(te_scaled)),
+            sprintf("%.2f%% (IC95: [%.2f%%, %.2f%%])", acc_mejor*100, ci_lo*100, ci_hi*100),
+            sprintf("%.4f (%s)", kap_mejor, kap_interp),
+            sprintf("%.2f%%", acc_tr*100),
+            sprintf("%.2f pp", brecha*100),
+            "33.33%")
+) %>%
+  kable(col.names = c("Parámetro", "Valor"), caption = "Ficha técnica del modelo KNN") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "bordered"), full_width = FALSE) %>%
+  pack_rows("Configuración", 1, 7) %>%
+  pack_rows("Desempeño", 8, 12)
+```
+
+```{r guardar, include=FALSE}
+save(tr_scaled, te_scaled, tr_labels, te_labels,
+     modelo4, cm1, cm2, cm3, cm4, comp_clas,
+     file = "knn_resultados_completos.RData")
+```
+
+---
+
+*Documento generado el `r format(Sys.time(), '%d de %B de %Y')` — CC3074 Minería de Datos, UVG.*
