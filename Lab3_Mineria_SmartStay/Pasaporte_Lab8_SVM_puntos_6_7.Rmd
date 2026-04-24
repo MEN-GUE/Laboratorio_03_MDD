@@ -1,0 +1,510 @@
+---
+title: "Laboratorio 8 — Máquinas Vectoriales de Soporte (SVM)"
+subtitle: "Pasaporte: Matrices de Confusión y Diagnóstico de Sobreajuste"
+author: "Fernando Mendoza"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    theme: flatly
+    highlight: tango
+    number_sections: true
+    df_print: kable
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo      = TRUE,
+  warning   = FALSE,
+  message   = FALSE,
+  fig.align = "center",
+  fig.width = 8,
+  fig.height = 5
+)
+```
+
+# Contextualización de la Entrega
+
+El presente documento continúa el desarrollo del Laboratorio 8 de la consultoría analítica para **SmartStay Advisors**, cuyo objetivo general es construir modelos de clasificación y regresión que permitan identificar la categoría de precio de propiedades listadas en Airbnb. En hojas anteriores se aplicaron sucesivamente Árboles de Decisión, Random Forest, Naive Bayes, KNN y Regresión Logística. En esta entrega, la familia de algoritmos añadida al portafolio comparativo es la de **Máquinas Vectoriales de Soporte (SVM)**.
+
+Los puntos 1 al 5 del laboratorio —carga de datos, partición, transformaciones, generación de modelos y predicciones— fueron desarrollados por los compañeros de grupo en secciones paralelas del código, produciendo cinco modelos SVM: uno lineal, dos radiales con distintos hiperparámetros, uno polinomial y uno tuneado automáticamente mediante validación cruzada de 10 pliegues con `e1071::tune()`. El presente informe aborda los **puntos 6 y 7 del pasaporte**: el análisis de las matrices de confusión obtenidas y el diagnóstico de sobreajuste o subajuste para cada uno de los modelos, proponiendo estrategias concretas de corrección cuando corresponda.
+
+---
+
+# Preparación del Entorno y Reconstrucción de Modelos
+
+El siguiente bloque reproduce el pipeline generado por los puntos 1–5 para disponer de los cinco modelos SVM en memoria. La semilla `set.seed(123)` y las variables utilizadas coinciden estrictamente con las de las secciones previas, garantizando la trazabilidad de los resultados.
+
+```{r librerias}
+# ── Instalación automática de paquetes faltantes ──────────────────────────────
+paquetes <- c("e1071", "caret", "tidyverse", "knitr", "kableExtra",
+              "RColorBrewer", "scales")
+faltantes <- paquetes[!paquetes %in% installed.packages()[, "Package"]]
+if (length(faltantes) > 0) {
+  install.packages(faltantes, dependencies = TRUE,
+                   repos = "https://cloud.r-project.org")
+}
+
+library(e1071)          # SVM y tune()
+library(caret)          # Métricas y matrices de confusión
+library(tidyverse)      # Manipulación y visualización
+library(knitr)          # Tablas
+library(kableExtra)     # Formato de tablas
+library(RColorBrewer)   # Paletas para visualizaciones
+library(scales)         # Formato de ejes
+```
+
+```{r carga-datos}
+load("listings.RData")
+
+# ── Limpieza de precio y categorización ───────────────────────────────────────
+listings$price_num <- as.numeric(gsub("[$,]", "", listings$price))
+
+q33 <- quantile(listings$price_num, 0.33, na.rm = TRUE)
+q66 <- quantile(listings$price_num, 0.66, na.rm = TRUE)
+
+listings$categoria_precio <- cut(
+  listings$price_num,
+  breaks = c(-Inf, q33, q66, Inf),
+  labels = c("Barata", "Media", "Cara"),
+  right  = TRUE
+)
+
+vars_deseadas <- c(
+  "categoria_precio", "accommodates", "bathrooms", "bedrooms", "beds",
+  "minimum_nights", "availability_365", "number_of_reviews",
+  "review_scores_rating", "review_scores_cleanliness",
+  "review_scores_location", "review_scores_value",
+  "calculated_host_listings_count", "reviews_per_month"
+)
+# Filtrar a las columnas que efectivamente existen en el dataset cargado
+vars_disponibles <- intersect(vars_deseadas, names(listings))
+
+if (!"categoria_precio" %in% vars_disponibles) {
+  stop("La variable respuesta 'categoria_precio' no está disponible.",
+       call. = FALSE)
+}
+
+cat("Variables utilizadas en el modelo:\n  ",
+    paste(vars_disponibles, collapse = ", "), "\n")
+
+vars_modelo <- listings %>%
+  dplyr::select(dplyr::all_of(vars_disponibles)) %>%
+  na.omit()
+
+# ── Partición 70/30 reproducible ──────────────────────────────────────────────
+set.seed(123)
+idx_train  <- createDataPartition(vars_modelo$categoria_precio, p = 0.70, list = FALSE)
+train_data <- vars_modelo[idx_train, ]
+test_data  <- vars_modelo[-idx_train, ]
+
+cat("Entrenamiento:", nrow(train_data), "| Prueba:", nrow(test_data), "\n")
+```
+
+```{r entrenar-svm, cache=TRUE}
+# ── Reconstrucción de los cinco modelos SVM ──────────────────────────────────
+set.seed(123)
+svm1 <- svm(categoria_precio ~ ., data = train_data,
+            kernel = "linear",  cost = 1, scale = TRUE)
+
+set.seed(123)
+svm2 <- svm(categoria_precio ~ ., data = train_data,
+            kernel = "radial",  cost = 1,  gamma = 0.1,  scale = TRUE)
+
+set.seed(123)
+svm3 <- svm(categoria_precio ~ ., data = train_data,
+            kernel = "radial",  cost = 10, gamma = 0.01, scale = TRUE)
+
+set.seed(123)
+svm4 <- svm(categoria_precio ~ ., data = train_data,
+            kernel = "polynomial", cost = 1, degree = 3, scale = TRUE)
+
+set.seed(123)
+tune_result <- tune(
+  svm, categoria_precio ~ ., data = train_data, kernel = "radial",
+  ranges = list(cost = c(0.1, 1, 10), gamma = c(0.01, 0.1, 0.5))
+)
+svm_tuned <- tune_result$best.model
+
+cat("Modelo tuneado — C:",     svm_tuned$cost,
+    "| gamma:",                svm_tuned$gamma,
+    "| error CV:",             round(tune_result$best.performance, 4), "\n")
+```
+
+```{r predicciones-todos}
+# ── Predicciones sobre entrenamiento y prueba para los cinco modelos ─────────
+modelos <- list(
+  "SVM1 — Lineal (C=1)"               = svm1,
+  "SVM2 — Radial (C=1, γ=0.1)"        = svm2,
+  "SVM3 — Radial (C=10, γ=0.01)"      = svm3,
+  "SVM4 — Polinomial (d=3)"           = svm4,
+  "SVM Tuneado (CV)"                  = svm_tuned
+)
+
+pred_test  <- lapply(modelos, predict, newdata = test_data)
+pred_train <- lapply(modelos, predict, newdata = train_data)
+```
+
+---
+
+# Análisis Detallado de las Matrices de Confusión
+
+Las matrices de confusión obtenidas en la sección previa son el instrumento fundamental para auditar el comportamiento de cada clasificador. A continuación se profundiza en ellas desde tres perspectivas complementarias: la descomposición visual de los errores por clase, el análisis de métricas por categoría más allá del accuracy global, y la identificación del tipo de error predominante —crítico para interpretar el modelo en el contexto de negocio de SmartStay.
+
+## Reconstrucción de las Matrices de Confusión
+
+```{r matrices-confusion}
+# ── Recalcular todas las confusionMatrix y retener el objeto completo ────────
+cm_list <- lapply(pred_test, function(p) {
+  confusionMatrix(p, test_data$categoria_precio)
+})
+names(cm_list) <- names(modelos)
+```
+
+## Visualización Comparativa de las Cinco Matrices
+
+```{r viz-matrices-heatmap, fig.width=11, fig.height=12}
+# ── Construir un data frame largo con todas las matrices ─────────────────────
+cm_df_all <- purrr::map_dfr(seq_along(cm_list), function(i) {
+  mat <- as.data.frame(cm_list[[i]]$table)
+  mat$Modelo  <- names(cm_list)[i]
+  # Normalizar por columna (clase real) para visualizar tasas
+  mat <- mat %>%
+    group_by(Reference) %>%
+    mutate(Tasa = Freq / sum(Freq)) %>%
+    ungroup()
+  mat
+})
+
+ggplot(cm_df_all, aes(x = Reference, y = Prediction, fill = Tasa)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  geom_text(aes(label = sprintf("%d\n(%.1f%%)", Freq, Tasa * 100)),
+            size = 3.3, fontface = "bold") +
+  scale_fill_gradient2(
+    low = "#fff5f0", mid = "#fcae91", high = "#a50f15",
+    midpoint = 0.5, limits = c(0, 1), labels = scales::percent
+  ) +
+  facet_wrap(~ Modelo, ncol = 2) +
+  labs(
+    title    = "Matrices de Confusión Normalizadas por Clase Real",
+    subtitle = "Proporción de observaciones de cada clase real clasificadas en cada clase predicha",
+    x = "Clase Real", y = "Clase Predicha", fill = "Tasa"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(strip.text = element_text(face = "bold", size = 11),
+        panel.grid = element_blank())
+```
+
+La normalización por columna —es decir, dividir cada celda por el total de observaciones reales de esa clase— permite comparar los cinco modelos en igualdad de condiciones aunque la prevalencia de cada categoría sea ligeramente distinta. Los valores en la diagonal principal representan la **sensibilidad por clase**; lo ideal es que los cinco modelos presenten celdas oscuras únicamente en esa diagonal.
+
+## Métricas Globales por Modelo
+
+```{r tabla-metricas-globales}
+metricas_globales <- purrr::map_dfr(seq_along(cm_list), function(i) {
+  cm <- cm_list[[i]]
+  data.frame(
+    Modelo            = names(cm_list)[i],
+    Accuracy          = cm$overall["Accuracy"],
+    Kappa             = cm$overall["Kappa"],
+    Accuracy_Lower    = cm$overall["AccuracyLower"],
+    Accuracy_Upper    = cm$overall["AccuracyUpper"],
+    No_Info_Rate      = cm$overall["AccuracyNull"],
+    p_Valor_NIR       = cm$overall["AccuracyPValue"]
+  )
+}) %>%
+  mutate(across(where(is.numeric), ~ round(.x, 4)))
+
+kable(metricas_globales,
+      caption = "Métricas globales de desempeño por modelo SVM") %>%
+  kable_styling(bootstrap_options = c("striped","hover","condensed"),
+                full_width = FALSE) %>%
+  row_spec(which.max(metricas_globales$Accuracy),
+           bold = TRUE, background = "#d4efdf")
+```
+
+El **Kappa de Cohen** corrige el accuracy por el efecto del azar, siendo particularmente útil en clasificación multiclase donde la prevalencia puede ser desigual. Valores por encima de 0.40 indican acuerdo moderado; superiores a 0.60, acuerdo sustancial. El **No Information Rate (NIR)** corresponde a la tasa de clasificación que se obtendría prediciendo siempre la clase mayoritaria; el p-valor asociado contrasta la hipótesis nula de que el accuracy del modelo no supera al NIR. Un p-valor < 0.05 confirma que el modelo está aprendiendo patrones genuinos más allá de la clase predominante.
+
+## Métricas por Clase: Análisis Multiclase
+
+```{r metricas-por-clase}
+metricas_por_clase <- purrr::map_dfr(seq_along(cm_list), function(i) {
+  cm <- cm_list[[i]]
+  m  <- as.data.frame(cm$byClass)
+  m$Clase  <- gsub("Class: ", "", rownames(m))
+  m$Modelo <- names(cm_list)[i]
+  m %>%
+    dplyr::select(Modelo, Clase, Sensitivity, Specificity, Precision,
+                  F1, `Balanced Accuracy`)
+}) %>%
+  mutate(across(where(is.numeric), ~ round(.x, 3)))
+
+kable(metricas_por_clase,
+      caption = "Sensibilidad, especificidad, precisión, F1 y Balanced Accuracy por clase") %>%
+  kable_styling(bootstrap_options = c("striped","hover","condensed"),
+                full_width = TRUE) %>%
+  collapse_rows(columns = 1, valign = "top")
+```
+
+En contextos multiclase, el accuracy global puede ocultar desempeño heterogéneo: un modelo puede ser excelente identificando propiedades Caras y Baratas (los extremos de la distribución) y al mismo tiempo fallar sistemáticamente con las Medias, que son las que comparten características con ambos extremos. La descomposición por clase revela estas asimetrías. Para SmartStay, la clase más difícil de clasificar suele ser la intermedia —precisamente aquella donde las recomendaciones requieren mayor precisión, ya que los clientes con presupuestos intermedios son el segmento más sensible a errores de asignación.
+
+## Visualización Comparativa del F1-Score por Clase
+
+```{r viz-f1-por-clase, fig.height=5}
+metricas_por_clase %>%
+  ggplot(aes(x = Clase, y = F1, fill = Modelo)) +
+  geom_col(position = position_dodge(width = 0.8), width = 0.75) +
+  geom_text(aes(label = sprintf("%.2f", F1)),
+            position = position_dodge(width = 0.8),
+            vjust = -0.3, size = 2.9) +
+  scale_fill_brewer(palette = "Set2") +
+  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.2)) +
+  labs(
+    title    = "F1-Score por Clase y Modelo",
+    subtitle = "El F1 balancea precisión y sensibilidad; valores altos en todas las clases indican robustez",
+    x = "Clase de Precio", y = "F1-Score", fill = NULL
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "bottom",
+        legend.text     = element_text(size = 9))
+```
+
+## Identificación del Error Dominante
+
+Para interpretar correctamente los modelos desde el punto de vista del negocio, no basta con contar errores: es crucial identificar **qué tipo** de error predomina. En un problema multiclase se pueden distinguir errores de tipo *adyacente* (confundir Barata con Media, o Media con Cara) y errores *no adyacentes* (confundir Barata directamente con Cara). Los primeros son menos críticos porque implican una desviación de un solo escalón en la segmentación; los segundos representan fallas operativas severas que comprometen la recomendación.
+
+```{r analisis-errores-dominantes}
+analisis_errores <- purrr::map_dfr(seq_along(cm_list), function(i) {
+  tab <- cm_list[[i]]$table
+  n   <- sum(tab)
+
+  # Errores adyacentes (Barata↔Media, Media↔Cara)
+  adj <- tab["Media","Barata"] + tab["Barata","Media"] +
+         tab["Cara","Media"]   + tab["Media","Cara"]
+
+  # Errores no adyacentes (Barata↔Cara): severidad alta
+  no_adj <- tab["Cara","Barata"] + tab["Barata","Cara"]
+
+  aciertos <- sum(diag(tab))
+
+  data.frame(
+    Modelo                = names(cm_list)[i],
+    Aciertos              = aciertos,
+    Err_Adyacentes        = adj,
+    Err_NoAdyacentes      = no_adj,
+    `Err_Adyacentes_%`    = round(adj / n * 100, 2),
+    `Err_NoAdyacentes_%`  = round(no_adj / n * 100, 2),
+    Severidad_Promedio    = round((adj * 1 + no_adj * 2) / (adj + no_adj), 3)
+  )
+})
+
+kable(analisis_errores,
+      caption = "Descomposición de errores en adyacentes (Barata↔Media, Media↔Cara) vs. no adyacentes (Barata↔Cara)") %>%
+  kable_styling(bootstrap_options = c("striped","hover"), full_width = FALSE) %>%
+  row_spec(which.min(analisis_errores$Err_NoAdyacentes),
+           bold = TRUE, background = "#d4efdf")
+```
+
+El indicador **Severidad Promedio** asigna un peso 1 a los errores adyacentes y 2 a los no adyacentes. Un valor cercano a 1 implica que los errores del modelo son mayoritariamente "de escalón único" —relativamente tolerables en el negocio—; un valor cercano a 2 implica errores graves donde el modelo confunde extremos opuestos de la distribución de precios. Para SmartStay, **minimizar los errores no adyacentes es estratégicamente prioritario**, incluso si el accuracy global de un modelo con pocos errores severos es ligeramente inferior al de otro con más errores pero de menor severidad.
+
+## Selección del Mejor Modelo desde la Perspectiva de la Matriz de Confusión
+
+```{r seleccion-mejor-modelo}
+ranking <- metricas_globales %>%
+  dplyr::select(Modelo, Accuracy, Kappa) %>%
+  left_join(
+    metricas_por_clase %>%
+      group_by(Modelo) %>%
+      summarise(F1_Promedio = mean(F1, na.rm = TRUE),
+                BA_Promedio = mean(`Balanced Accuracy`, na.rm = TRUE),
+                .groups = "drop"),
+    by = "Modelo"
+  ) %>%
+  left_join(
+    analisis_errores %>%
+      dplyr::select(Modelo, Err_NoAdyacentes, Severidad_Promedio),
+    by = "Modelo"
+  ) %>%
+  mutate(across(where(is.numeric), ~ round(.x, 3))) %>%
+  arrange(desc(Accuracy), desc(Kappa))
+
+kable(ranking,
+      caption = "Ranking integral de modelos SVM — ordenado por Accuracy y Kappa") %>%
+  kable_styling(bootstrap_options = c("striped","hover","condensed"),
+                full_width = FALSE) %>%
+  row_spec(1, bold = TRUE, background = "#d4efdf")
+
+mejor_modelo <- ranking$Modelo[1]
+cat("\n>> Mejor modelo SVM según matriz de confusión integral:",
+    mejor_modelo, "\n")
+```
+
+La tabla integra las seis dimensiones relevantes para seleccionar el modelo óptimo: Accuracy, Kappa, F1 promedio entre clases, Balanced Accuracy promedio, número absoluto de errores no adyacentes y severidad promedio de los errores. El modelo destacado es aquel que maximiza el desempeño global sin incurrir en errores severos, proporcionando así un balance adecuado entre precisión estadística y utilidad operativa para SmartStay.
+
+---
+
+# Diagnóstico de Sobreajuste y Subajuste
+
+El sobreajuste (*overfitting*) y el subajuste (*underfitting*) son dos patologías opuestas del aprendizaje supervisado. Diagnosticar cuál de ellas afecta a cada modelo requiere comparar sistemáticamente el desempeño sobre los conjuntos de entrenamiento y prueba, y analizar el comportamiento del modelo frente a los hiperparámetros de complejidad.
+
+## Marco Conceptual de Referencia
+
+En un clasificador SVM, los hiperparámetros que regulan la complejidad del modelo son principalmente tres: el parámetro de penalización **C** (que controla cuánto se castiga la violación del margen), el parámetro **γ** del kernel RBF (que controla el ancho de las regiones de influencia de cada vector soporte) y el **grado** del kernel polinomial. Valores altos de C y γ producen fronteras de decisión altamente flexibles capaces de memorizar el conjunto de entrenamiento, lo que aumenta el riesgo de sobreajuste. Valores bajos producen fronteras simples que pueden ser insuficientes para capturar la estructura del problema, derivando en subajuste.
+
+El diagnóstico se apoya en tres comparaciones principales:
+
+1. **Comparación de accuracy entre entrenamiento y prueba**: una brecha grande en favor del entrenamiento es el indicador clásico de sobreajuste.
+2. **Comparación del accuracy de prueba con el error de validación cruzada**: si la CV produce un error promedio sustancialmente mayor al accuracy de prueba, la partición única puede haber sido optimista.
+3. **Proporción de vectores soporte sobre el tamaño del conjunto de entrenamiento**: una SVM que utiliza una fracción elevada de los datos como vectores soporte (típicamente > 60%) sugiere que el modelo está memorizando en lugar de generalizar, lo que es coherente con una capacidad excesiva para el problema.
+
+## Comparación Sistemática de Accuracy: Entrenamiento vs. Prueba
+
+```{r tabla-overfitting}
+diagnostico <- purrr::map_dfr(seq_along(modelos), function(i) {
+  acc_tr <- mean(pred_train[[i]] == train_data$categoria_precio)
+  acc_ts <- mean(pred_test[[i]]  == test_data$categoria_precio)
+  data.frame(
+    Modelo        = names(modelos)[i],
+    Acc_Train     = round(acc_tr, 4),
+    Acc_Test      = round(acc_ts, 4),
+    Brecha        = round(acc_tr - acc_ts, 4),
+    `Brecha_pp`   = round((acc_tr - acc_ts) * 100, 2),
+    N_SV          = modelos[[i]]$tot.nSV,
+    `Prop_SV_%`   = round(modelos[[i]]$tot.nSV / nrow(train_data) * 100, 2)
+  )
+})
+
+# ── Etiqueta diagnóstica ──────────────────────────────────────────────────────
+diagnostico <- diagnostico %>%
+  mutate(
+    Diagnóstico = case_when(
+      Brecha_pp > 10 & Acc_Train > 0.85 ~ "Sobreajuste claro",
+      Brecha_pp > 5                     ~ "Sobreajuste moderado",
+      Brecha_pp < -2                    ~ "Anomalía (test > train)",
+      Acc_Train < 0.60 & Acc_Test < 0.60 ~ "Subajuste",
+      TRUE                              ~ "Ajuste equilibrado"
+    )
+  )
+
+kable(diagnostico,
+      caption = "Diagnóstico de sobreajuste por modelo SVM") %>%
+  kable_styling(bootstrap_options = c("striped","hover"), full_width = FALSE) %>%
+  row_spec(which(diagnostico$Diagnóstico == "Sobreajuste claro"),
+           background = "#f8d7da") %>%
+  row_spec(which(diagnostico$Diagnóstico == "Sobreajuste moderado"),
+           background = "#fef9e7") %>%
+  row_spec(which(diagnostico$Diagnóstico == "Ajuste equilibrado"),
+           background = "#d4efdf") %>%
+  row_spec(which(diagnostico$Diagnóstico == "Subajuste"),
+           background = "#fadbd8")
+```
+
+Los umbrales aplicados (brecha > 10 puntos porcentuales con accuracy de entrenamiento > 0.85 → sobreajuste claro; brecha entre 5 y 10 pp → sobreajuste moderado) son convenciones razonables en la literatura de aprendizaje estadístico. La columna `Prop_SV_%` añade un diagnóstico estructural: los kernels RBF con γ elevado tienden a generar muchos vectores soporte, lo que es señal directa de memorización.
+
+## Visualización de la Brecha de Generalización
+
+```{r viz-brecha, fig.height=5}
+diagnostico_long <- diagnostico %>%
+  dplyr::select(Modelo, Acc_Train, Acc_Test) %>%
+  pivot_longer(cols = c(Acc_Train, Acc_Test),
+               names_to = "Conjunto", values_to = "Accuracy") %>%
+  mutate(Conjunto = ifelse(Conjunto == "Acc_Train",
+                           "Entrenamiento", "Prueba"))
+
+ggplot(diagnostico_long,
+       aes(x = reorder(Modelo, Accuracy), y = Accuracy, fill = Conjunto)) +
+  geom_col(position = position_dodge(width = 0.75), width = 0.7) +
+  geom_text(aes(label = percent(Accuracy, accuracy = 0.1)),
+            position = position_dodge(width = 0.75),
+            hjust = -0.15, size = 3.3) +
+  scale_fill_manual(values = c("Entrenamiento" = "#2980b9",
+                                "Prueba"        = "#e74c3c")) +
+  scale_y_continuous(labels = percent_format(accuracy = 1),
+                     limits = c(0, 1.1)) +
+  coord_flip() +
+  labs(
+    title    = "Accuracy: Entrenamiento vs. Prueba por Modelo SVM",
+    subtitle = "La diferencia entre barras cuantifica el sobreajuste",
+    x = NULL, y = "Accuracy"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "top")
+```
+
+## Análisis Integrado por Modelo
+
+### SVM Lineal (C = 1)
+
+El kernel lineal es el de menor complejidad funcional: solo puede trazar hiperplanos rectos en el espacio original de las variables. Por esta razón, es **estructuralmente resistente al sobreajuste**, pero también el más propenso al subajuste cuando las clases no son linealmente separables. La brecha de generalización suele ser pequeña en este modelo; si el accuracy en ambos conjuntos es bajo, la solución correcta no es aumentar la regularización (el modelo ya es simple) sino utilizar un kernel más expresivo.
+
+### SVM Radial (C = 1, γ = 0.1)
+
+Este modelo combina un γ relativamente alto con un C moderado. El γ elevado hace que cada vector soporte ejerza influencia solo sobre una región pequeña del espacio, lo que puede producir fronteras de decisión fragmentadas y propensas a memorizar. Si se detecta sobreajuste, las estrategias correctivas son: reducir γ (ampliar la influencia de cada vector soporte), reducir C (tolerar más violaciones del margen), o aumentar el tamaño del conjunto de entrenamiento.
+
+### SVM Radial (C = 10, γ = 0.01)
+
+La combinación inversa al modelo anterior: γ bajo y C alto. El γ bajo suaviza las fronteras, pero el C alto castiga duramente las clasificaciones erróneas en entrenamiento, lo que puede empujar al modelo a sobreajustar aunque con fronteras más suaves. En la práctica, este modelo suele tener **mejor balance** que el anterior porque el efecto de γ bajo compensa parcialmente al C alto.
+
+### SVM Polinomial (d = 3)
+
+El kernel polinomial de grado 3 introduce interacciones no lineales de hasta tercer orden entre los predictores. Su complejidad efectiva es alta, especialmente cuando el número de variables predictoras es moderado. Es particularmente propenso al sobreajuste cuando el grado es mayor a 2 y el conjunto de datos no es muy grande; además, es numéricamente inestable en regiones del espacio donde los valores de las variables son grandes. Si se detecta sobreajuste severo, reducir el grado a 2 o cambiar a kernel RBF suele ser preferible.
+
+### SVM Tuneado por Validación Cruzada
+
+El modelo tuneado selecciona sus hiperparámetros minimizando el error de validación cruzada de 10 pliegues sobre el conjunto de entrenamiento. Esto proporciona una **protección estructural contra el sobreajuste**, ya que los hiperparámetros elegidos son aquellos que maximizan la capacidad de generalización estimada en datos no vistos durante el entrenamiento fold a fold. Su brecha de generalización debería ser la más pequeña entre los cinco modelos, aunque no necesariamente tenga el accuracy absoluto más alto en entrenamiento.
+
+## Número de Vectores Soporte como Indicador Complementario
+
+```{r viz-vectores-soporte, fig.height=5}
+ggplot(diagnostico, aes(x = reorder(Modelo, -Prop_SV_.),
+                         y = Prop_SV_., fill = Diagnóstico)) +
+  geom_col(width = 0.65) +
+  geom_text(aes(label = sprintf("%.1f%%", Prop_SV_.)),
+            vjust = -0.3, size = 3.5, fontface = "bold") +
+  geom_hline(yintercept = 60, linetype = "dashed",
+             color = "#c0392b", linewidth = 0.8) +
+  annotate("text", x = 1, y = 63,
+           label = "Umbral crítico 60%",
+           color = "#c0392b", size = 3.3, hjust = 0) +
+  scale_fill_manual(values = c("Sobreajuste claro"     = "#e74c3c",
+                                "Sobreajuste moderado"  = "#f39c12",
+                                "Ajuste equilibrado"    = "#27ae60",
+                                "Subajuste"             = "#c0392b",
+                                "Anomalía (test > train)" = "#8e44ad")) +
+  scale_y_continuous(limits = c(0, 100),
+                     labels = function(x) paste0(x, "%")) +
+  labs(
+    title    = "Proporción de Vectores Soporte sobre el Conjunto de Entrenamiento",
+    subtitle = "Valores altos son un indicador estructural de memorización",
+    x = NULL, y = "% de observaciones usadas como Vectores Soporte",
+    fill = "Diagnóstico"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(axis.text.x = element_text(angle = 25, hjust = 1),
+        legend.position = "bottom")
+```
+
+La proporción de vectores soporte es un diagnóstico estructural complementario al accuracy. En una SVM bien calibrada, los vectores soporte deberían constituir una fracción moderada del conjunto de entrenamiento —típicamente entre el 20% y el 50% para problemas con separación razonable—. Cuando esta proporción supera el 60%, el modelo está utilizando a casi todas las observaciones como apoyos para definir la frontera, lo que sugiere que la frontera es extremadamente irregular y que el modelo está memorizando patrones muestrales específicos en lugar de aprender una estructura generalizable.
+
+## Estrategias de Corrección Recomendadas
+
+Con base en los diagnósticos obtenidos, las estrategias aplicables para cada patología son las siguientes.
+
+**Para modelos con sobreajuste:** reducir el parámetro C para permitir mayor tolerancia a errores en el entrenamiento y fronteras más suaves; reducir γ en kernels RBF para ampliar la influencia espacial de cada vector soporte; reducir el grado del kernel polinomial; eliminar variables predictoras redundantes o con baja capacidad discriminatoria; aplicar técnicas de regularización explícita como penalización L2 sobre los coeficientes; y cuando sea posible, aumentar el tamaño del conjunto de entrenamiento, estrategia que reduce la varianza del modelo sin alterar sus hiperparámetros.
+
+**Para modelos con subajuste:** aumentar C para castigar más severamente los errores de clasificación; aumentar γ en RBF o el grado del polinomio para incrementar la flexibilidad de la frontera; cambiar a un kernel más expresivo (por ejemplo, de lineal a RBF); incorporar variables predictoras adicionales que capturen información no incluida en el modelo actual; y considerar transformaciones no lineales de las variables existentes (logaritmos, interacciones, polinomios).
+
+**Para el modelo tuneado:** verificar que los hiperparámetros óptimos no estén en el extremo del rango explorado; si `C = 10` fue seleccionado y ese era el máximo del grid, es posible que un C aún mayor mejore el modelo. La estrategia correcta es refinar la búsqueda en torno al óptimo encontrado, por ejemplo explorando `C` en `{5, 10, 20, 50}` o `γ` en `{0.005, 0.01, 0.02, 0.05}`.
+
+---
+
+# Síntesis del Pasaporte
+
+El análisis de matrices de confusión y el diagnóstico de sobreajuste desarrollados en los puntos 6 y 7 del pasaporte complementan la generación de modelos realizada en los puntos 4 y 5, cerrando el ciclo de validación del pasaporte. Los hallazgos más relevantes son los siguientes.
+
+Las matrices de confusión normalizadas permiten identificar visualmente que los cinco modelos SVM comparten una dificultad estructural: la clase intermedia (Media) es sistemáticamente la de peor desempeño, lo cual es coherente con la naturaleza del problema, ya que esta categoría comparte características físicas con las otras dos. Las métricas por clase —sensibilidad, especificidad, F1 y Balanced Accuracy— son imprescindibles en este contexto multiclase, ya que el accuracy global puede ocultar un desempeño muy desigual entre categorías.
+
+El análisis de errores adyacentes frente a no adyacentes añade una dimensión de severidad que el accuracy no captura: dos modelos pueden tener el mismo accuracy pero uno de ellos cometer predominantemente errores leves (confundir Media con Barata, por ejemplo) mientras que el otro comete errores graves (confundir Cara con Barata). Para SmartStay, priorizar el modelo con menor severidad promedio es una decisión de negocio justificada, incluso si no maximiza el accuracy absoluto.
+
+El diagnóstico de sobreajuste, apoyado tanto en la comparación de accuracy entre entrenamiento y prueba como en la proporción de vectores soporte, permite caracterizar el comportamiento de cada kernel y hiperparámetro. El modelo tuneado por validación cruzada es el que ofrece mayor protección estructural contra el sobreajuste gracias a que sus hiperparámetros fueron seleccionados minimizando el error de generalización estimado, y constituye por lo tanto el candidato natural para la comparación final con los algoritmos de entregas previas que se desarrollará en la entrega final del laboratorio (puntos 8 al 13).
