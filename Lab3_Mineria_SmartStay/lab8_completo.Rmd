@@ -151,3 +151,208 @@ print(distribucion)
 Al finalizar esta etapa, hemos segmentado con éxito nuestro mercado en tres categorías comerciales muy bien definidas. Ahora sabemos que las propiedades económicas son aquellas con tarifas de hasta 135 dólares por noche, las propiedades intermedias se ubican entre los 135 y los 247 dólares, y los alojamientos de lujo o caros son los que superan la barrera de los 247 dólares.
 
 Lo más destacable de esta separación es el excelente equilibrio que logramos. Como muestra el resumen, cada segmento representa prácticamente un 33% del total de las viviendas analizadas. Para el negocio de SmartStay Advisors, tener esta distribución tan equitativa es un escenario ideal. Nos garantiza que, cuando el modelo comience a aprender y a clasificar, no tendrá "favoritismos" hacia un grupo en particular simplemente porque haya más propiedades de ese tipo, asegurando recomendaciones justas y muy precisas para nuestros clientes.
+
+# Actividad 4: Generación y Tuneo de Modelos SVM (Clasificación)
+```{r}
+# Fijamos la semilla para garantizar la reproducibilidad
+set.seed(666)
+
+# Modelo 1: Kernel Lineal (Busca separaciones rectas)
+svm1 <- svm(categoria_precio ~ ., data = train_svm_clas, 
+            kernel = "linear", cost = 1, scale = TRUE)
+
+# Modelo 2: Kernel Radial Estándar (Fronteras curvas/circulares)
+svm2 <- svm(categoria_precio ~ ., data = train_svm_clas, 
+            kernel = "radial", cost = 1, gamma = 0.1, scale = TRUE)
+
+# Modelo 3: Kernel Radial Estricto (Mayor costo y menor radio)
+svm3 <- svm(categoria_precio ~ ., data = train_svm_clas, 
+            kernel = "radial", cost = 10, gamma = 0.01, scale = TRUE)
+
+# Modelo 4: Kernel Polinomial (Fronteras con curvas de grado 3)
+svm4 <- svm(categoria_precio ~ ., data = train_svm_clas, 
+            kernel = "polynomial", cost = 1, degree = 3, scale = TRUE)
+
+# Tuneo Automático: Búsqueda de la mejor combinación para el Kernel Radial
+tune_result <- tune(
+  svm, categoria_precio ~ ., data = train_svm_clas, kernel = "radial",
+  ranges = list(
+    cost  = c(0.1, 1, 10),
+    gamma = c(0.01, 0.1, 0.5)
+  )
+)
+
+# Guardamos el mejor modelo encontrado
+svm_tuned <- tune_result$best.model
+
+cat("--- MEJORES PARÁMETROS ENCONTRADOS (TUNEO) ---\n")
+print(tune_result$best.parameters)
+```
+En lugar de apostar por una sola estrategia, entrenamos cuatro "versiones" distintas del algoritmo usando diferentes lógicas geométricas (líneas rectas, curvas polinomiales y áreas de influencia radiales). Además, dejamos que el sistema realizara un "tuneo automático"; esto significa que la herramienta probó por sí misma múltiples combinaciones de rigor y flexibilidad hasta encontrar la configuración matemática óptima para nuestro mercado de propiedades, eliminando por completo las adivinanzas.
+
+# Actividad 5: Predicción y Evaluación de los Modelos SVM
+```{r}
+# 1. Realizamos las predicciones sobre el conjunto de prueba (datos nuevos)
+pred_svm1  <- predict(svm1, newdata = test_svm_clas)
+pred_svm2  <- predict(svm2, newdata = test_svm_clas)
+pred_svm3  <- predict(svm3, newdata = test_svm_clas)
+pred_svm4  <- predict(svm4, newdata = test_svm_clas)
+pred_tuned <- predict(svm_tuned, newdata = test_svm_clas)
+
+# 2. Extraemos la exactitud (Accuracy) de cada modelo
+acc_1 <- confusionMatrix(pred_svm1, test_svm_clas$categoria_precio)$overall["Accuracy"]
+acc_2 <- confusionMatrix(pred_svm2, test_svm_clas$categoria_precio)$overall["Accuracy"]
+acc_3 <- confusionMatrix(pred_svm3, test_svm_clas$categoria_precio)$overall["Accuracy"]
+acc_4 <- confusionMatrix(pred_svm4, test_svm_clas$categoria_precio)$overall["Accuracy"]
+acc_t <- confusionMatrix(pred_tuned, test_svm_clas$categoria_precio)$overall["Accuracy"]
+
+resultados_svm <- data.frame(
+  Modelo = c("SVM Lineal", "SVM Radial (Base)", "SVM Radial (Estricto)", 
+             "SVM Polinomial", "SVM Radial (Tuneado)"),
+  Exactitud = c(acc_1, acc_2, acc_3, acc_4, acc_t)
+)
+
+# 3. Gráfica comparativa de desempeño
+ggplot(resultados_svm, aes(x = reorder(Modelo, Exactitud), y = Exactitud, fill = Modelo)) +
+  geom_col(show.legend = FALSE, alpha = 0.85) +
+  coord_flip() +
+  geom_text(aes(label = scales::percent(Exactitud, accuracy = 0.1)), 
+            hjust = -0.2, fontface = "bold", color = "#2C3E50") +
+  scale_fill_brewer(palette = "Blues") +
+  scale_y_continuous(limits = c(0, 1)) +
+  labs(title = "Exactitud de los Modelos SVM en Datos Desconocidos",
+       subtitle = "Capacidad de predecir la categoría correcta (Mayor es mejor)",
+       x = "", y = "Exactitud (Accuracy)") +
+  theme_minimal()
+
+# 4. Diagnóstico de Sobreajuste (Memorización vs. Aprendizaje)
+acc_train <- c(
+  mean(predict(svm1, train_svm_clas) == train_svm_clas$categoria_precio),
+  mean(predict(svm2, train_svm_clas) == train_svm_clas$categoria_precio),
+  mean(predict(svm3, train_svm_clas) == train_svm_clas$categoria_precio),
+  mean(predict(svm4, train_svm_clas) == train_svm_clas$categoria_precio),
+  mean(predict(svm_tuned, train_svm_clas) == train_svm_clas$categoria_precio)
+)
+
+overfit_tabla <- data.frame(
+  Modelo = resultados_svm$Modelo,
+  `Acierto Entrenamiento` = acc_train,
+  `Acierto Prueba` = resultados_svm$Exactitud,
+  Brecha = acc_train - resultados_svm$Exactitud
+)
+
+knitr::kable(overfit_tabla, digits = 4, 
+             caption = "Diagnóstico de Sobreajuste: Diferencia entre Entrenamiento y Prueba")
+```
+Pusimos a prueba a nuestros cinco modelos exigiéndoles que clasificaran viviendas que nunca antes habían visto (conjunto de prueba). La gráfica nos muestra al claro ganador: el modelo Radial Tuneado, el cual logró el mayor porcentaje de acierto en el mercado real.
+
+Adicionalmente, la tabla de diagnóstico de sobreajuste nos confirma excelentes noticias. Si un modelo memorizara los datos en lugar de aprender, veríamos una calificación altísima en "Entrenamiento" y una muy baja en "Prueba" (una brecha grande). En nuestro caso, la brecha de los mejores modelos es sumamente pequeña, lo que demuestra que la herramienta está generalizando de forma saludable y está lista para aplicarse en escenarios reales de negocio sin riesgo de engañarnos.
+
+# Actividad 6: Análisis Detallado con Matrices de Confusión
+```{r}
+# 1. Extraemos la matriz de confusión detallada del mejor modelo (Tuneado)
+cm_mejor <- confusionMatrix(pred_tuned, test_svm_clas$categoria_precio)
+
+cat("--- MATRIZ DE CONFUSIÓN: MODELO RADIAL TUNEADO ---\n")
+print(cm_mejor$table)
+
+# 2. Análisis de Severidad de Errores (Aporte del compañero)
+# Agrupamos las predicciones de todos los modelos para compararlos
+predicciones_lista <- list(
+  "Lineal" = pred_svm1, "Radial Base" = pred_svm2, 
+  "Radial Estricto" = pred_svm3, "Polinomial" = pred_svm4, 
+  "Tuneado" = pred_tuned
+)
+
+analisis_errores <- purrr::map_dfr(names(predicciones_lista), function(nombre) {
+  tab <- table(Prediccion = predicciones_lista[[nombre]], Real = test_svm_clas$categoria_precio)
+  
+  # Aciertos (Diagonal)
+  aciertos <- sum(diag(tab))
+  
+  # Errores Leves / Adyacentes (Confundir Barata con Media, o Media con Cara)
+  err_leves <- tab["Media","Economica"] + tab["Economica","Media"] +
+               tab["Cara","Media"] + tab["Media","Cara"]
+  
+  # Errores Graves / No Adyacentes (Confundir Barata directamente con Cara)
+  err_graves <- tab["Cara","Economica"] + tab["Economica","Cara"]
+  
+  data.frame(
+    Modelo = nombre,
+    Aciertos = aciertos,
+    `Errores Leves` = err_leves,
+    `Errores Graves` = err_graves
+  )
+})
+
+knitr::kable(analisis_errores, caption = "Análisis de Severidad de Errores por Modelo")
+
+# 3. Visualización del F1-Score (Equilibrio entre precisión y sensibilidad)
+f1_scores <- as.data.frame(cm_mejor$byClass)[, "F1"]
+nombres_clases <- gsub("Class: ", "", rownames(cm_mejor$byClass))
+
+data.frame(Clase = nombres_clases, F1 = f1_scores) %>%
+  ggplot(aes(x = Clase, y = F1, fill = Clase)) +
+  geom_col(show.legend = FALSE, alpha = 0.8) +
+  geom_text(aes(label = round(F1, 2)), vjust = -0.5, fontface = "bold") +
+  scale_fill_brewer(palette = "Set2") +
+  ylim(0, 1) +
+  labs(title = "Rendimiento del Mejor Modelo por Categoría (F1-Score)",
+       subtitle = "Valores cercanos a 1 indican mayor precisión sin falsos positivos",
+       x = "Categoría de Precio", y = "F1-Score") +
+  theme_minimal()
+```
+Al analizar detenidamente la matriz de confusión, descubrimos un hallazgo crucial para el negocio: no todos los errores son iguales.
+
+Como lo demuestra la tabla de severidad, el modelo Tuneado no solo tiene la mayor cantidad de aciertos, sino que mantiene los "Errores Graves" al mínimo. Un error leve (clasificar una propiedad económica como intermedia) es tolerable en la estrategia de precios de Airbnb. Sin embargo, un error grave (tasar una propiedad económica como si fuera de lujo) causaría que la casa nunca se rente, generando pérdidas directas.
+
+Adicionalmente, la gráfica de F1-Score revela que el modelo es excelente identificando las propiedades Económicas y Caras, pero le cuesta un poco más definir las "Intermedias". Esto es natural, ya que la categoría media no tiene características tan extremas y suele mezclarse visual y estadísticamente con los otros dos grupos.
+
+# Actividad 7: Diagnóstico Avanzado de Sobreajuste
+```{r}
+# 1. Recuperamos el acierto en entrenamiento (calculado en Act 5) y extraemos los Vectores de Soporte
+diagnostico_svm <- data.frame(
+  Modelo = resultados_svm$Modelo,
+  `Acierto Entrenam.` = acc_train,
+  `Acierto Prueba` = resultados_svm$Exactitud,
+  Brecha = acc_train - resultados_svm$Exactitud,
+  `Vectores de Soporte` = c(svm1$tot.nSV, svm2$tot.nSV, svm3$tot.nSV, svm4$tot.nSV, svm_tuned$tot.nSV)
+)
+
+# Calculamos qué porcentaje de los datos se usaron como "apoyo" (Vectores)
+diagnostico_svm$`% Datos Memorizados` <- round((diagnostico_svm$Vectores.de.Soporte / nrow(train_svm_clas)) * 100, 1)
+
+# 2. Asignamos un diagnóstico automático
+diagnostico_svm <- diagnostico_svm %>%
+  mutate(Diagnostico = case_when(
+    Brecha > 0.10 ~ "Sobreajuste Claro (Peligro)",
+    Brecha > 0.05 ~ "Sobreajuste Moderado",
+    `% Datos Memorizados` > 60 ~ "Alta Memorización (Riesgo)",
+    TRUE ~ "Ajuste Sano y Equilibrado"
+  ))
+
+knitr::kable(diagnostico_svm, digits = 3, caption = "Auditoría de Memorización vs Aprendizaje (Sobreajuste)")
+
+# 3. Gráfica de Memorización
+ggplot(diagnostico_svm, aes(x = reorder(Modelo, `% Datos Memorizados`), y = `% Datos Memorizados`, fill = Diagnostico)) +
+  geom_col(alpha = 0.85) +
+  geom_hline(yintercept = 60, linetype = "dashed", color = "red") +
+  geom_text(aes(label = paste0(`% Datos Memorizados`, "%")), hjust = -0.2, size = 3.5) +
+  scale_fill_manual(values = c("Ajuste Sano y Equilibrado" = "#27ae60", 
+                               "Alta Memorización (Riesgo)" = "#f39c12", 
+                               "Sobreajuste Claro (Peligro)" = "#e74c3c")) +
+  coord_flip() +
+  ylim(0, 100) +
+  labs(title = "Uso de Vectores de Soporte por Modelo",
+       subtitle = "Si el modelo usa más del 60% de los datos (línea roja), está memorizando en lugar de aprender.",
+       x = "Modelo", y = "% de Datos Usados como Soporte") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+Para asegurar que nuestra herramienta sea confiable a largo plazo, realizamos una auditoría de sobreajuste. En la familia de algoritmos SVM, si el modelo usa demasiados puntos de datos como "vectores de soporte" (más del 60%), significa que está creando una frontera demasiado caprichosa y memorizando el entrenamiento en lugar de entender la regla general.
+
+Nuestra tabla y gráfica confirman que el Modelo Tuneado y el Radial Base mantienen un comportamiento muy sano, usando menos del 60% de los datos como apoyo y logrando una diferencia mínima (brecha) entre su calificación de entrenamiento y su calificación en prueba.
+
+Por el contrario, si hubiéramos elegido al azar un modelo mal calibrado (como podría ocurrir con parámetros extremos no tuneados), correríamos el riesgo de lanzar a producción un modelo memorizador que fracasaría rotundamente al tasar nuevas propiedades de Airbnb.
+
+
