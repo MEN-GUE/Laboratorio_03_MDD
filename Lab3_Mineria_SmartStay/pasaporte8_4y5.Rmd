@@ -1,0 +1,291 @@
+---
+title: "Pasaporte7_4&5"
+author: "Alejandro Anton"
+date: "2026-04-24"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+library(e1071)
+library(caret)
+library(dplyr)
+library(ggplot2)
+```
+
+## Carga y Preparación de los Datos
+
+```{r carga_datos}
+load("listings.RData")
+
+# Limpiar precio: remover "$" y comas, convertir a numérico
+listings$price_num <- as.numeric(gsub("[$,]", "", listings$price))
+
+# Crear variable categórica: barata / media / cara
+# Se usan los percentiles 33 y 66 como puntos de corte
+q33 <- quantile(listings$price_num, 0.33, na.rm = TRUE)
+q66 <- quantile(listings$price_num, 0.66, na.rm = TRUE)
+
+cat("Corte barata/media:", q33, "\n")
+cat("Corte media/cara:  ", q66, "\n")
+
+listings$categoria_precio <- cut(
+  listings$price_num,
+  breaks = c(-Inf, q33, q66, Inf),
+  labels = c("Barata", "Media", "Cara"),
+  right  = TRUE
+)
+
+table(listings$categoria_precio)
+```
+
+## Exploración y Transformaciones
+
+```{r exploracion}
+# Seleccionar variables numéricas relevantes para el modelo
+vars_modelo <- listings %>%
+  select(
+    categoria_precio,
+    accommodates,
+    bathrooms,
+    bedrooms,
+    beds,
+    minimum_nights,
+    availability_365,
+    number_of_reviews,
+    review_scores_rating,
+    review_scores_cleanliness,
+    review_scores_location,
+    review_scores_value,
+    calculated_host_listings_count,
+    reviews_per_month
+  ) %>%
+  na.omit()
+
+cat("Filas después de na.omit():", nrow(vars_modelo), "\n")
+cat("Distribución de clases:\n")
+print(table(vars_modelo$categoria_precio))
+```
+
+### Justificación de transformaciones
+
+Las transformaciones aplicadas fueron:
+
+1. **Precio → categórica**: `precio` estaba como `character` con formato `"$XX.00"`, se limpió con `gsub` y se convirtió en factor de 3 niveles usando percentiles 33% y 66% como cortes (barata ≤ $141, media ≤ $264, cara > $264).
+2. **Eliminación de NAs**: SVM no admite valores faltantes; se usó `na.omit()` sobre las variables seleccionadas.
+3. **Selección de variables**: Se eliminaron columnas de texto (URLs, descripciones), identificadores y columnas con >50% NAs. Se conservaron variables numéricas interpretables.
+4. **Escalado (dentro de caret)**: SVM es sensible a la escala; `caret` aplica `preProcess = c("center","scale")` en los modelos.
+
+## División en Conjuntos de Entrenamiento y Prueba
+
+Se usa la misma semilla que en hojas anteriores para reproducibilidad.
+
+```{r split}
+set.seed(123)  # Misma semilla de hojas de trabajo anteriores
+
+idx_train <- createDataPartition(vars_modelo$categoria_precio, p = 0.70, list = FALSE)
+train_data <- vars_modelo[idx_train, ]
+test_data  <- vars_modelo[-idx_train, ]
+
+cat("Entrenamiento:", nrow(train_data), "filas\n")
+cat("Prueba:       ", nrow(test_data),  "filas\n")
+```
+
+---
+
+## Ejercicio 4 – Generación de Múltiples Modelos SVM
+
+Se entrenan 4 modelos con diferentes kernels y parámetros:
+
+| Modelo | Kernel      | C      | Gamma / d     |
+|--------|-------------|--------|---------------|
+| SVM1   | Lineal      | 1      | —             |
+| SVM2   | Radial (RBF)| 1      | γ = 0.1       |
+| SVM3   | Radial (RBF)| 10     | γ = 0.01      |
+| SVM4   | Polinomial  | 1      | d = 3         |
+
+```{r svm_lineal}
+# Modelo 1: Kernel Lineal
+set.seed(123)
+svm1 <- svm(
+  categoria_precio ~ .,
+  data   = train_data,
+  kernel = "linear",
+  cost   = 1,
+  scale  = TRUE
+)
+summary(svm1)
+```
+
+```{r svm_radial1}
+# Modelo 2: Kernel Radial, C=1, gamma=0.1
+set.seed(123)
+svm2 <- svm(
+  categoria_precio ~ .,
+  data   = train_data,
+  kernel = "radial",
+  cost   = 1,
+  gamma  = 0.1,
+  scale  = TRUE
+)
+summary(svm2)
+```
+
+```{r svm_radial2}
+# Modelo 3: Kernel Radial, C=10, gamma=0.01
+set.seed(123)
+svm3 <- svm(
+  categoria_precio ~ .,
+  data   = train_data,
+  kernel = "radial",
+  cost   = 10,
+  gamma  = 0.01,
+  scale  = TRUE
+)
+summary(svm3)
+```
+
+```{r svm_polinomial}
+# Modelo 4: Kernel Polinomial, C=1, d=3
+set.seed(123)
+svm4 <- svm(
+  categoria_precio ~ .,
+  data   = train_data,
+  kernel = "polynomial",
+  cost   = 1,
+  degree = 3,
+  scale  = TRUE
+)
+summary(svm4)
+```
+
+### (Opcional) Tuneo Automático del Modelo Radial
+
+```{r tune_svm, cache=TRUE}
+# Se tuneará svm2 (radial) con búsqueda en grid reducida para eficiencia
+set.seed(123)
+tune_result <- tune(
+  svm,
+  categoria_precio ~ .,
+  data   = train_data,
+  kernel = "radial",
+  ranges = list(
+    cost  = c(0.1, 1, 10),
+    gamma = c(0.01, 0.1, 0.5)
+  )
+)
+
+cat("Mejores parámetros:\n")
+print(tune_result$best.parameters)
+cat("Error de validación cruzada del mejor modelo:", tune_result$best.performance, "\n")
+
+# Modelo tuneado
+svm_tuned <- tune_result$best.model
+```
+
+**Interpretación del tuneo**: `tune()` realiza validación cruzada 10-fold sobre la grilla de hiperparámetros. El error reportado es el error de clasificación promedio. El modelo con menor error es seleccionado automáticamente. Esto permite elegir `C` y `γ` de forma objetiva en lugar de empírica.
+
+---
+
+## Ejercicio 5 – Predicciones y Matrices de Confusión
+
+```{r predicciones}
+pred_svm1   <- predict(svm1,   newdata = test_data)
+pred_svm2   <- predict(svm2,   newdata = test_data)
+pred_svm3   <- predict(svm3,   newdata = test_data)
+pred_svm4   <- predict(svm4,   newdata = test_data)
+pred_tuned  <- predict(svm_tuned, newdata = test_data)
+```
+
+### Matriz de Confusión – SVM1 (Lineal, C=1)
+
+```{r cm_svm1}
+cm1 <- confusionMatrix(pred_svm1, test_data$categoria_precio)
+print(cm1)
+```
+
+### Matriz de Confusión – SVM2 (Radial, C=1, γ=0.1)
+
+```{r cm_svm2}
+cm2 <- confusionMatrix(pred_svm2, test_data$categoria_precio)
+print(cm2)
+```
+
+### Matriz de Confusión – SVM3 (Radial, C=10, γ=0.01)
+
+```{r cm_svm3}
+cm3 <- confusionMatrix(pred_svm3, test_data$categoria_precio)
+print(cm3)
+```
+
+### Matriz de Confusión – SVM4 (Polinomial, d=3)
+
+```{r cm_svm4}
+cm4 <- confusionMatrix(pred_svm4, test_data$categoria_precio)
+print(cm4)
+```
+
+### Matriz de Confusión – SVM Tuneado (mejor C y γ)
+
+```{r cm_tuned}
+cm_tuned <- confusionMatrix(pred_tuned, test_data$categoria_precio)
+print(cm_tuned)
+```
+
+### Tabla Comparativa de Exactitud
+
+```{r comparativa}
+resultados <- data.frame(
+  Modelo   = c("SVM1 Lineal", "SVM2 Radial C=1 g=0.1",
+                "SVM3 Radial C=10 g=0.01", "SVM4 Polinomial d=3",
+                "SVM Tuneado"),
+  Kernel   = c("linear","radial","radial","polynomial","radial"),
+  Accuracy = c(
+    cm1$overall["Accuracy"],
+    cm2$overall["Accuracy"],
+    cm3$overall["Accuracy"],
+    cm4$overall["Accuracy"],
+    cm_tuned$overall["Accuracy"]
+  )
+)
+
+resultados$Accuracy <- round(resultados$Accuracy, 4)
+knitr::kable(resultados, caption = "Comparación de Exactitud por Modelo SVM")
+
+ggplot(resultados, aes(x = reorder(Modelo, Accuracy), y = Accuracy, fill = Kernel)) +
+  geom_col() +
+  coord_flip() +
+  labs(title = "Exactitud de Modelos SVM en conjunto de prueba",
+       x = "", y = "Accuracy") +
+  theme_minimal() +
+  geom_text(aes(label = scales::percent(Accuracy, accuracy=0.1)), hjust = -0.1, size = 3.5) +
+  ylim(0, 1)
+```
+
+### Análisis de Sobreajuste / Desajuste
+
+```{r overfitting}
+# Accuracy en entrenamiento para comparar con prueba
+acc_train <- c(
+  mean(predict(svm1,  train_data) == train_data$categoria_precio),
+  mean(predict(svm2,  train_data) == train_data$categoria_precio),
+  mean(predict(svm3,  train_data) == train_data$categoria_precio),
+  mean(predict(svm4,  train_data) == train_data$categoria_precio),
+  mean(predict(svm_tuned, train_data) == train_data$categoria_precio)
+)
+
+overfitting_tabla <- data.frame(
+  Modelo       = resultados$Modelo,
+  Acc_Train    = round(acc_train, 4),
+  Acc_Test     = resultados$Accuracy,
+  Diferencia   = round(acc_train - resultados$Accuracy, 4)
+)
+
+knitr::kable(overfitting_tabla, caption = "Análisis de Sobreajuste: Train vs Test")
+```
+
+**Interpretación:**
+
+- Si `Acc_Train >> Acc_Test` (diferencia > 0.05): el modelo está **sobreajustado** (memoriza el entrenamiento pero no generaliza). Soluciones: reducir `C`, aumentar regularización, usar menos variables.
+- Si `Acc_Train ≈ Acc_Test` y ambas son bajas: el modelo está **desajustado**. Soluciones: aumentar `C`, usar kernel más complejo (polinomial o RBF con γ mayor), agregar más variables.
+- El modelo tuneado debería presentar el mejor balance entre ambos errores gracias a la validación cruzada.
