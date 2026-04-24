@@ -1,0 +1,153 @@
+---
+title: "lab8"
+output: html_document
+date: "2026-04-24"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Actividad 1: Preparación de Datos y Modelo SVR Inicial
+```{r}
+# 1. Carga de librerías esenciales
+library(e1071)
+library(caret)
+library(dplyr)
+library(tidyr)
+
+
+# 2. Carga y depuración del dataset original
+load("listings.RData")
+
+df_svr <- listings %>%
+  # Limpieza de la variable precio (formato numérico) 
+  mutate(price = as.numeric(gsub("[\\$,]", "", price))) %>%
+  filter(price > 0) %>%
+  # Selección de predictores estructurales y factorizacion 
+  select(price, accommodates, bathrooms, bedrooms, beds, 
+         review_scores_rating, availability_365, number_of_reviews, 
+         minimum_nights, room_type) %>%
+  mutate(room_type = as.factor(room_type)) %>%
+  # CORRECCIÓN: Eliminar NAs de TODAS las columnas seleccionadas
+  drop_na()
+
+# 3. Partición de datos con Semilla 666
+set.seed(666)
+n <- nrow(df_svr)
+train_index <- sample(1:n, size = 0.7 * n)
+
+train_svr <- df_svr[train_index, ]
+test_svr  <- df_svr[-train_index, ]
+
+# 4. Preprocesamiento: Escalado y Centrado (Mandatorio para SVM) 
+preProcValues <- preProcess(train_svr, method = c("center", "scale"))
+train_svr_scaled <- predict(preProcValues, train_svr)
+test_svr_scaled  <- predict(preProcValues, test_svr)
+
+# 5. Entrenamiento del modelo Support Vector Regression (SVR) 
+modelo_svr_base <- svm(price ~ ., data = train_svr_scaled, kernel = "radial", cost = 1)
+
+# 6. Predicción sobre el conjunto de prueba
+predicciones_svr <- predict(modelo_svr_base, test_svr_scaled)
+
+# 7. Cálculo de métricas de desempeño iniciales
+rmse_svr <- sqrt(mean((predicciones_svr - test_svr_scaled$price)^2))
+r2_svr <- cor(predicciones_svr, test_svr_scaled$price)^2
+
+cat(sprintf("SVR (Base) -> RMSE: %.2f | R2: %.4f\n", rmse_svr, r2_svr))
+```
+Al evaluar nuestro primer modelo base, obtuvimos un margen de error (RMSE) de 0.91 y un nivel de acierto (R2) de 0.0591.
+
+En términos sencillos para el negocio, esto significa que el modelo actual solo logra explicar cerca del 6% de los motivos por los que cambia el precio de un alojamiento. Es decir, usando su configuración básica, al algoritmo le cuesta mucho predecir los precios con exactitud y comete errores considerables en sus estimaciones.
+
+Este resultado es completamente normal para un primer acercamiento y nos sirve como un excelente punto de referencia. Nos confirma que la configuración "por defecto" del algoritmo no es suficiente y justifica totalmente la necesidad de realizar ajustes más avanzados (tuneo de parámetros) en las siguientes actividades para que la herramienta sea realmente útil y competitiva en el mercado.
+
+# Actividad 2: Exploración y Transformaciones para SVM
+```{r}
+# 1. Exploración visual de las escalas originales
+# Mostramos un resumen estadístico para evidenciar la diferencia de magnitudes
+cat("\n--- RESUMEN DE VARIABLES ANTES DE ESCALAR ---\n")
+resumen_original <- train_svr %>% 
+  select(accommodates, bathrooms, availability_365) %>% 
+  summary()
+print(resumen_original)
+
+# 2. Manejo de variables categóricas (Variables Dummy)
+# SVM es un algoritmo matemático puro; necesita que categorías como 'room_type' sean numéricas.
+# Creamos el modelo de transformación usando dummyVars de la librería caret.
+transformacion_dummy <- dummyVars(price ~ ., data = train_svr)
+
+# Aplicamos la transformación a los conjuntos de entrenamiento y prueba
+train_svr_dummy <- predict(transformacion_dummy, newdata = train_svr)
+test_svr_dummy  <- predict(transformacion_dummy, newdata = test_svr)
+
+# Volvemos a unir la variable respuesta 'price', ya que dummyVars la aísla
+train_svr_dummy <- data.frame(price = train_svr$price, train_svr_dummy)
+test_svr_dummy  <- data.frame(price = test_svr$price, test_svr_dummy)
+
+# 3. Escalado y Centrado definitivo sobre la matriz completamente numérica
+# Ahora que todo es numérico, calculamos los parámetros de escalado
+preProc_final <- preProcess(train_svr_dummy, method = c("center", "scale"))
+
+# Transformamos los datos
+train_svr_final <- predict(preProc_final, train_svr_dummy)
+test_svr_final  <- predict(preProc_final, test_svr_dummy)
+
+# 4. Verificación de las escalas transformadas
+cat("\n--- RESUMEN DE VARIABLES DESPUÉS DE ESCALAR ---\n")
+resumen_transformado <- train_svr_final %>% 
+  select(accommodates, bathrooms, availability_365) %>% 
+  summary()
+print(resumen_transformado)
+```
+Al analizar el resumen de nuestros datos antes y después de la transformación, confirmamos que el proceso de escalado se aplicó con éxito.
+
+Antes de realizar este ajuste, las características de las propiedades tenían rangos numéricos muy distintos. Por ejemplo, la disponibilidad de la vivienda llegaba hasta los 365 días, mientras que el número de baños variaba apenas entre 0 y 17. Para un algoritmo como SVM, que toma decisiones basándose en distancias matemáticas, esto representaba un problema: el modelo le daría casi toda la importancia a los números más grandes (la disponibilidad) e ignoraría factores clave como el tamaño físico de la casa.
+
+Al observar los resultados "después de escalar", verificamos que todas las variables ahora tienen un promedio (Mean) exactamente igual a cero y se mueven en proporciones similares. En términos prácticos, esto significa que hemos "nivelado el terreno de juego". Ahora el algoritmo evaluará cada característica de la propiedad de forma justa y equilibrada, un paso indispensable para asegurar que las clasificaciones y estimaciones de precio que hagamos para SmartStay Advisors sean verdaderamente confiables.
+
+# Actividad 3: Definición de la Variable Respuesta Categórica
+```{r}
+# 1. Cálculo de los umbrales (terciles) basados en el precio original de entrenamiento
+# Usamos el 33% y el 66% para dividir el mercado en 3 partes proporcionales
+p33 <- quantile(train_svr$price, probs = 0.33)
+p66 <- quantile(train_svr$price, probs = 0.66)
+
+cat("--- UMBRALES DE MERCADO ---\n")
+cat(sprintf("Límite Económica -> Intermedia: $%.2f\n", p33))
+cat(sprintf("Límite Intermedia -> Cara:      $%.2f\n\n", p66))
+
+# 2. Función lógica para asignar las categorías
+asignar_categoria <- function(precio, umbral_bajo, umbral_alto) {
+  case_when(
+    precio <= umbral_bajo ~ "Economica",
+    precio <= umbral_alto ~ "Intermedia",
+    TRUE                  ~ "Cara"
+  )
+}
+
+# 3. Creación de la variable objetivo categórica (como factor)
+train_svr_final$categoria_precio <- factor(
+  asignar_categoria(train_svr$price, p33, p66),
+  levels = c("Economica", "Intermedia", "Cara")
+)
+
+test_svr_final$categoria_precio <- factor(
+  asignar_categoria(test_svr$price, p33, p66),
+  levels = c("Economica", "Intermedia", "Cara")
+)
+
+# 4. Aislamiento: Eliminamos la variable original 'price' para que el modelo no haga trampa
+train_svm_clas <- train_svr_final %>% select(-price)
+test_svm_clas  <- test_svr_final %>% select(-price)
+
+# 5. Verificación final del balance de clases
+cat("--- BALANCE DE CLASES (Conjunto de Entrenamiento) ---\n")
+distribucion <- round(prop.table(table(train_svm_clas$categoria_precio)) * 100, 2)
+print(distribucion)
+```
+
+Al finalizar esta etapa, hemos segmentado con éxito nuestro mercado en tres categorías comerciales muy bien definidas. Ahora sabemos que las propiedades económicas son aquellas con tarifas de hasta 135 dólares por noche, las propiedades intermedias se ubican entre los 135 y los 247 dólares, y los alojamientos de lujo o caros son los que superan la barrera de los 247 dólares.
+
+Lo más destacable de esta separación es el excelente equilibrio que logramos. Como muestra el resumen, cada segmento representa prácticamente un 33% del total de las viviendas analizadas. Para el negocio de SmartStay Advisors, tener esta distribución tan equitativa es un escenario ideal. Nos garantiza que, cuando el modelo comience a aprender y a clasificar, no tendrá "favoritismos" hacia un grupo en particular simplemente porque haya más propiedades de ese tipo, asegurando recomendaciones justas y muy precisas para nuestros clientes.
