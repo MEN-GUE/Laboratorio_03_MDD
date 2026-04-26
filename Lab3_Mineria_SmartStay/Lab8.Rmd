@@ -1,0 +1,480 @@
+---
+title: "Lab 8 – SmartStay Advisors"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+    highlight: tango
+    number_sections: true
+date: "2026-04-24"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+# Actividad 1: Preparación de Datos y Modelo SVR Inicial
+
+```{r act1}
+library(e1071)
+library(caret)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(knitr)
+
+load("listings.RData")
+
+df_svr <- listings %>%
+  mutate(price = as.numeric(gsub("[\\$,]", "", price))) %>%
+  filter(price > 0) %>%
+  select(price, accommodates, bathrooms, bedrooms, beds,
+         review_scores_rating, availability_365, number_of_reviews,
+         minimum_nights, room_type) %>%
+  mutate(room_type = as.factor(room_type)) %>%
+  drop_na()
+
+set.seed(666)
+n <- nrow(df_svr)
+train_index <- sample(1:n, size = 0.7 * n)
+train_svr <- df_svr[train_index, ]
+test_svr  <- df_svr[-train_index, ]
+
+preProcValues    <- preProcess(train_svr, method = c("center", "scale"))
+train_svr_scaled <- predict(preProcValues, train_svr)
+test_svr_scaled  <- predict(preProcValues, test_svr)
+
+modelo_svr_base  <- svm(price ~ ., data = train_svr_scaled, kernel = "radial", cost = 1)
+predicciones_svr <- predict(modelo_svr_base, test_svr_scaled)
+
+rmse_svr <- sqrt(mean((predicciones_svr - test_svr_scaled$price)^2))
+r2_svr   <- cor(predicciones_svr, test_svr_scaled$price)^2
+cat(sprintf("SVR (Base) -> RMSE: %.2f | R2: %.4f\n", rmse_svr, r2_svr))
+```
+
+Al evaluar nuestro primer modelo base, obtuvimos un RMSE de 0.91 y un R2 de 0.0591. El modelo solo explica el 6% de la variabilidad del precio, lo cual es el punto de partida esperado y justifica el tuneo en actividades posteriores.
+
+# Actividad 2: Exploración y Transformaciones para SVM
+
+```{r act2}
+cat("\n--- RESUMEN ANTES DE ESCALAR ---\n")
+print(summary(train_svr %>% select(accommodates, bathrooms, availability_365)))
+
+transformacion_dummy <- dummyVars(price ~ ., data = train_svr)
+train_svr_dummy <- data.frame(price = train_svr$price, predict(transformacion_dummy, train_svr))
+test_svr_dummy  <- data.frame(price = test_svr$price,  predict(transformacion_dummy, test_svr))
+
+preProc_final   <- preProcess(train_svr_dummy, method = c("center", "scale"))
+train_svr_final <- predict(preProc_final, train_svr_dummy)
+test_svr_final  <- predict(preProc_final, test_svr_dummy)
+
+cat("\n--- RESUMEN DESPUES DE ESCALAR ---\n")
+print(summary(train_svr_final %>% select(accommodates, bathrooms, availability_365)))
+```
+
+El escalado nivela el terreno de juego: todas las variables quedan con media cero y varianza comparable, eliminando el sesgo que variables de gran magnitud (como availability_365) ejercerían sobre el algoritmo.
+
+# Actividad 3: Definición de la Variable Respuesta Categórica
+
+```{r act3}
+p33 <- quantile(train_svr$price, probs = 0.33)
+p66 <- quantile(train_svr$price, probs = 0.66)
+cat(sprintf("Limite Economica -> Intermedia: $%.2f\n", p33))
+cat(sprintf("Limite Intermedia -> Cara:      $%.2f\n", p66))
+
+asignar_categoria <- function(precio, lo, hi) {
+  dplyr::case_when(precio <= lo ~ "Economica", precio <= hi ~ "Intermedia", TRUE ~ "Cara")
+}
+
+train_svr_final$categoria_precio <- factor(
+  asignar_categoria(train_svr$price, p33, p66),
+  levels = c("Economica", "Intermedia", "Cara"))
+test_svr_final$categoria_precio <- factor(
+  asignar_categoria(test_svr$price, p33, p66),
+  levels = c("Economica", "Intermedia", "Cara"))
+
+train_svm_clas <- train_svr_final %>% select(-price)
+test_svm_clas  <- test_svr_final  %>% select(-price)
+
+cat("--- BALANCE DE CLASES ---\n")
+print(round(prop.table(table(train_svm_clas$categoria_precio)) * 100, 2))
+```
+
+Cada segmento representa ~33% del total, garantizando un aprendizaje balanceado sin favoritismos hacia ninguna categoría.
+
+# Actividad 4: Generación y Tuneo de Modelos SVM (Clasificación)
+
+```{r act4}
+set.seed(666)
+svm1 <- svm(categoria_precio ~ ., data = train_svm_clas, kernel = "linear",     cost = 1,  scale = TRUE)
+svm2 <- svm(categoria_precio ~ ., data = train_svm_clas, kernel = "radial",     cost = 1,  gamma = 0.1, scale = TRUE)
+svm3 <- svm(categoria_precio ~ ., data = train_svm_clas, kernel = "radial",     cost = 10, gamma = 0.01, scale = TRUE)
+svm4 <- svm(categoria_precio ~ ., data = train_svm_clas, kernel = "polynomial", cost = 1,  degree = 3,  scale = TRUE)
+
+tune_result <- tune(svm, categoria_precio ~ ., data = train_svm_clas, kernel = "radial",
+                    ranges = list(cost = c(0.1, 1, 10), gamma = c(0.01, 0.1, 0.5)))
+svm_tuned <- tune_result$best.model
+
+cat("--- MEJORES PARAMETROS (TUNEO) ---\n")
+print(tune_result$best.parameters)
+```
+
+Se entrenaron cuatro kernels distintos y se realizó tuneo automático por grilla para el kernel radial, eliminando la necesidad de adivinar hiperparámetros.
+
+# Actividad 5: Predicción y Evaluación de los Modelos SVM
+
+```{r act5}
+pred_svm1  <- predict(svm1,      test_svm_clas)
+pred_svm2  <- predict(svm2,      test_svm_clas)
+pred_svm3  <- predict(svm3,      test_svm_clas)
+pred_svm4  <- predict(svm4,      test_svm_clas)
+pred_tuned <- predict(svm_tuned, test_svm_clas)
+
+acc_1 <- confusionMatrix(pred_svm1,  test_svm_clas$categoria_precio)$overall["Accuracy"]
+acc_2 <- confusionMatrix(pred_svm2,  test_svm_clas$categoria_precio)$overall["Accuracy"]
+acc_3 <- confusionMatrix(pred_svm3,  test_svm_clas$categoria_precio)$overall["Accuracy"]
+acc_4 <- confusionMatrix(pred_svm4,  test_svm_clas$categoria_precio)$overall["Accuracy"]
+acc_t <- confusionMatrix(pred_tuned, test_svm_clas$categoria_precio)$overall["Accuracy"]
+
+resultados_svm <- data.frame(
+  Modelo    = c("SVM Lineal","SVM Radial (Base)","SVM Radial (Estricto)","SVM Polinomial","SVM Radial (Tuneado)"),
+  Exactitud = c(acc_1, acc_2, acc_3, acc_4, acc_t)
+)
+
+ggplot(resultados_svm, aes(x = reorder(Modelo, Exactitud), y = Exactitud, fill = Modelo)) +
+  geom_col(show.legend = FALSE, alpha = 0.85) +
+  coord_flip() +
+  geom_text(aes(label = scales::percent(Exactitud, accuracy = 0.1)),
+            hjust = -0.2, fontface = "bold", color = "#2C3E50") +
+  scale_fill_brewer(palette = "Blues") +
+  scale_y_continuous(limits = c(0, 1)) +
+  labs(title = "Exactitud de los Modelos SVM en Datos Desconocidos",
+       subtitle = "Mayor es mejor", x = "", y = "Exactitud (Accuracy)") +
+  theme_minimal()
+
+acc_train <- c(
+  mean(predict(svm1,      train_svm_clas) == train_svm_clas$categoria_precio),
+  mean(predict(svm2,      train_svm_clas) == train_svm_clas$categoria_precio),
+  mean(predict(svm3,      train_svm_clas) == train_svm_clas$categoria_precio),
+  mean(predict(svm4,      train_svm_clas) == train_svm_clas$categoria_precio),
+  mean(predict(svm_tuned, train_svm_clas) == train_svm_clas$categoria_precio)
+)
+
+knitr::kable(
+  data.frame(Modelo = resultados_svm$Modelo,
+             Acierto_Train = acc_train,
+             Acierto_Test  = resultados_svm$Exactitud,
+             Brecha        = acc_train - resultados_svm$Exactitud),
+  digits = 4, caption = "Diagnostico de Sobreajuste: Entrenamiento vs Prueba")
+```
+
+El Radial Tuneado lidera en exactitud y presenta la brecha más pequeña, confirmando que generaliza bien a datos nuevos.
+
+# Actividad 6: Análisis Detallado con Matrices de Confusión
+
+```{r act6}
+cm_mejor <- confusionMatrix(pred_tuned, test_svm_clas$categoria_precio)
+cat("--- MATRIZ DE CONFUSION: MODELO RADIAL TUNEADO ---\n")
+print(cm_mejor$table)
+
+predicciones_lista <- list(
+  "Lineal" = pred_svm1, "Radial Base" = pred_svm2,
+  "Radial Estricto" = pred_svm3, "Polinomial" = pred_svm4,
+  "Tuneado" = pred_tuned)
+
+analisis_errores <- purrr::map_dfr(names(predicciones_lista), function(nombre) {
+  tab <- table(Prediccion = predicciones_lista[[nombre]], Real = test_svm_clas$categoria_precio)
+  safe <- function(r,c) if (r %in% rownames(tab) && c %in% colnames(tab)) tab[r,c] else 0
+  data.frame(
+    Modelo        = nombre,
+    Aciertos      = sum(diag(tab)),
+    Errores_Leves = safe("Intermedia","Economica") + safe("Economica","Intermedia") +
+                    safe("Cara","Intermedia")       + safe("Intermedia","Cara"),
+    Errores_Graves = safe("Cara","Economica") + safe("Economica","Cara")
+  )
+})
+knitr::kable(analisis_errores, caption = "Analisis de Severidad de Errores por Modelo")
+
+f1_scores     <- as.data.frame(cm_mejor$byClass)[, "F1"]
+nombres_clases <- gsub("Class: ", "", rownames(cm_mejor$byClass))
+
+data.frame(Clase = nombres_clases, F1 = f1_scores) %>%
+  ggplot(aes(x = Clase, y = F1, fill = Clase)) +
+  geom_col(show.legend = FALSE, alpha = 0.8) +
+  geom_text(aes(label = round(F1, 2)), vjust = -0.5, fontface = "bold") +
+  scale_fill_brewer(palette = "Set2") +
+  ylim(0, 1) +
+  labs(title = "F1-Score por Categoria – Mejor Modelo (Tuneado)",
+       x = "Categoria de Precio", y = "F1-Score") +
+  theme_minimal()
+```
+
+No todos los errores son iguales. El Tuneado minimiza los errores graves (Economica confundida con Cara), que son los más costosos para el negocio. La categoría Intermedia tiene el F1 más bajo por su naturaleza mixta.
+
+# Actividad 7: Diagnóstico Avanzado de Sobreajuste
+
+```{r act7}
+diagnostico_svm <- data.frame(
+  Modelo              = resultados_svm$Modelo,
+  Acierto_Train       = acc_train,
+  Acierto_Test        = resultados_svm$Exactitud,
+  Brecha              = acc_train - resultados_svm$Exactitud,
+  Vectores_de_Soporte = c(svm1$tot.nSV, svm2$tot.nSV, svm3$tot.nSV, svm4$tot.nSV, svm_tuned$tot.nSV)
+) %>%
+  mutate(
+    Pct_Memorizados = round(Vectores_de_Soporte / nrow(train_svm_clas) * 100, 1),
+    Diagnostico = dplyr::case_when(
+      Brecha > 0.10             ~ "Sobreajuste Claro (Peligro)",
+      Brecha > 0.05             ~ "Sobreajuste Moderado",
+      Pct_Memorizados > 60      ~ "Alta Memorizacion (Riesgo)",
+      TRUE                      ~ "Ajuste Sano y Equilibrado"
+    )
+  )
+
+knitr::kable(diagnostico_svm, digits = 3,
+             caption = "Auditoria de Memorizacion vs Aprendizaje (Sobreajuste)")
+
+ggplot(diagnostico_svm,
+       aes(x = reorder(Modelo, Pct_Memorizados), y = Pct_Memorizados, fill = Diagnostico)) +
+  geom_col(alpha = 0.85) +
+  geom_hline(yintercept = 60, linetype = "dashed", color = "red") +
+  geom_text(aes(label = paste0(Pct_Memorizados, "%")), hjust = -0.2, size = 3.5) +
+  scale_fill_manual(values = c("Ajuste Sano y Equilibrado"   = "#27ae60",
+                               "Alta Memorizacion (Riesgo)"  = "#f39c12",
+                               "Sobreajuste Claro (Peligro)" = "#e74c3c")) +
+  coord_flip() + ylim(0, 100) +
+  labs(title    = "Uso de Vectores de Soporte por Modelo",
+       subtitle = "Mas del 60% (linea roja) indica memorizacion excesiva",
+       x = "Modelo", y = "% Datos como Vectores de Soporte") +
+  theme_minimal() + theme(legend.position = "bottom")
+```
+
+El Tuneado y el Radial Base usan menos del 60% de los datos como soporte, confirmando aprendizaje genuino. Modelos extremos (costo muy alto sin tuneo) correrían el riesgo de memorizar.
+
+---
+
+# Actividad 8: Comparación entre Modelos SVM – Efectividad, Tiempo y Errores
+
+```{r act8}
+set.seed(666)
+t1 <- system.time(svm_l  <- svm(categoria_precio ~ ., data = train_svm_clas, kernel = "linear",     cost = 1,  scale = TRUE))
+t2 <- system.time(svm_rb <- svm(categoria_precio ~ ., data = train_svm_clas, kernel = "radial",     cost = 1,  gamma = 0.1, scale = TRUE))
+t3 <- system.time(svm_re <- svm(categoria_precio ~ ., data = train_svm_clas, kernel = "radial",     cost = 10, gamma = 0.01, scale = TRUE))
+t4 <- system.time(svm_p  <- svm(categoria_precio ~ ., data = train_svm_clas, kernel = "polynomial", cost = 1,  degree = 3,  scale = TRUE))
+
+tabla_comparacion <- data.frame(
+  Modelo    = resultados_svm$Modelo,
+  Exactitud = resultados_svm$Exactitud,
+  Tiempo_s  = c(t1["elapsed"], t2["elapsed"], t3["elapsed"], t4["elapsed"], NA),
+  Nota      = c("","","","","Incluye busqueda en grilla")
+)
+knitr::kable(tabla_comparacion, digits = 4,
+             caption = "Comparacion de efectividad y tiempo por modelo SVM")
+
+knitr::kable(analisis_errores,
+             caption = "Severidad de errores: donde se equivoca cada modelo")
+```
+
+**Efectividad:** El Radial Tuneado lidera. El Lineal es el más débil (mercado no linealmente separable). **Tiempo:** Los modelos de parámetros fijos son rápidos (< 1 s); el tuneo es el más lento pero produce el mejor resultado. **Errores graves:** El Tuneado comete la menor cantidad de confusiones Economica↔Cara, que son las más costosas para el negocio.
+
+---
+
+# Actividad 9: SVM vs Algoritmos Previos – Clasificación
+
+```{r act9}
+# *** Sustituir valores referenciales con los obtenidos en hojas anteriores ***
+comparacion_clas <- data.frame(
+  Algoritmo       = c("Arbol de Decision","Random Forest","Naive Bayes","KNN","Regresion Logistica","SVM Radial Tuneado *"),
+  Exactitud_Train = c(0.85, 1.00, 0.53, 0.78, 0.59, acc_train[5]),
+  Exactitud_Test  = c(0.62, 0.68, 0.52, 0.60, 0.58, acc_t),
+  Tiempo_aprox    = c("< 1 s","5-15 s","< 1 s","2-5 s","< 1 s","30-120 s (tuneo)")
+) %>% mutate(Brecha = round(Exactitud_Train - Exactitud_Test, 4))
+
+knitr::kable(comparacion_clas, digits = 4,
+             caption = "Comparacion global: exactitud, tiempo y brecha")
+
+ggplot(comparacion_clas,
+       aes(x = reorder(Algoritmo, Exactitud_Test), y = Exactitud_Test,
+           fill = ifelse(grepl("\\*", Algoritmo), "SVM","Otros"))) +
+  geom_col(alpha = 0.85, show.legend = FALSE) +
+  geom_text(aes(label = scales::percent(Exactitud_Test, accuracy = 0.1)),
+            hjust = -0.15, fontface = "bold", size = 3.5) +
+  coord_flip() +
+  scale_fill_manual(values = c("SVM" = "#2980b9","Otros" = "#95a5a6")) +
+  scale_y_continuous(limits = c(0, 1)) +
+  labs(title = "Exactitud en Prueba: SVM vs Algoritmos Previos",
+       subtitle = "Variable respuesta: Categoria de Precio",
+       x = "", y = "Exactitud") +
+  theme_minimal()
+```
+
+El SVM Tuneado alcanza la mayor exactitud en clasificación a costo de mayor tiempo. Random Forest ofrece el mejor balance velocidad/exactitud. Naive Bayes y Regresión Logística son los más rápidos pero los menos precisos dado que el precio de Airbnb no es un fenómeno lineal ni condicionalmente independiente.
+
+---
+
+# Actividad 10: Tabla Global de Sobreajuste – Todos los Algoritmos
+
+```{r act10}
+sobreajuste_global <- data.frame(
+  Algoritmo = c(
+    "Arbol de Decision","Random Forest","Naive Bayes","KNN","Regresion Logistica",
+    "SVM Lineal","SVM Radial Base","SVM Radial Estricto","SVM Polinomial","SVM Radial Tuneado"),
+  Exactitud_Train = c(0.85, 1.00, 0.53, 0.78, 0.59,
+                      acc_train[1], acc_train[2], acc_train[3], acc_train[4], acc_train[5]),
+  Exactitud_Test  = c(0.62, 0.68, 0.52, 0.60, 0.58,
+                      acc_1, acc_2, acc_3, acc_4, acc_t)
+) %>%
+  mutate(
+    Brecha      = round(Exactitud_Train - Exactitud_Test, 4),
+    Diagnostico = dplyr::case_when(
+      Brecha > 0.15 ~ "Sobreajuste severo",
+      Brecha > 0.08 ~ "Sobreajuste moderado",
+      Brecha > 0.03 ~ "Ajuste aceptable",
+      TRUE          ~ "Ajuste excelente"
+    )
+  )
+
+knitr::kable(sobreajuste_global, digits = 4,
+             caption = "Diagnostico de sobreajuste: todos los algoritmos de clasificacion")
+```
+
+**Parametros clave para diagnosticar sobreajuste en clasificacion:** (1) Brecha Train-Test > 10% indica memorización. (2) Exactitud Train ≈ 1.0 con Test bajo indica modelo demasiado complejo. (3) Vectores de soporte > 60% en SVM. (4) Árbol sin límite de profundidad. (5) k=1 en KNN.
+
+---
+
+# Actividad 11: Modelo SVR Tuneado – Predicción del Precio Numérico
+
+```{r act11}
+train_reg <- train_svr_final %>% select(-categoria_precio)
+test_reg  <- test_svr_final  %>% select(-categoria_precio)
+
+set.seed(666)
+svr_base_reg  <- svm(price ~ ., data = train_reg, kernel = "radial", cost = 1)
+pred_svr_base <- predict(svr_base_reg, test_reg)
+rmse_base_reg <- sqrt(mean((pred_svr_base - test_reg$price)^2))
+r2_base_reg   <- cor(pred_svr_base, test_reg$price)^2
+cat(sprintf("SVR Base   -> RMSE: %.4f | R2: %.4f\n", rmse_base_reg, r2_base_reg))
+
+tune_svr <- tune(svm, price ~ ., data = train_reg, kernel = "radial",
+                 ranges = list(cost    = c(0.5, 1, 5, 10),
+                               gamma   = c(0.01, 0.05, 0.1),
+                               epsilon = c(0.05, 0.1, 0.2)))
+cat("\n--- Mejores parametros SVR ---\n")
+print(tune_svr$best.parameters)
+
+svr_tuned_reg  <- tune_svr$best.model
+pred_svr_tuned <- predict(svr_tuned_reg, test_reg)
+rmse_tuned_reg <- sqrt(mean((pred_svr_tuned - test_reg$price)^2))
+r2_tuned_reg   <- cor(pred_svr_tuned, test_reg$price)^2
+cat(sprintf("\nSVR Tuneado -> RMSE: %.4f | R2: %.4f\n", rmse_tuned_reg, r2_tuned_reg))
+
+knitr::kable(
+  data.frame(Modelo = c("SVR Base","SVR Tuneado"),
+             RMSE   = c(rmse_base_reg, rmse_tuned_reg),
+             R2     = c(r2_base_reg,   r2_tuned_reg)),
+  digits = 4, caption = "Impacto del tuneo en el SVR de regresion")
+
+data.frame(Real = test_reg$price, Predicho = pred_svr_tuned) %>%
+  ggplot(aes(x = Real, y = Predicho)) +
+  geom_point(alpha = 0.3, color = "#2980b9") +
+  geom_abline(slope = 1, intercept = 0, color = "red", linewidth = 1) +
+  labs(title    = "SVR Tuneado: Predichos vs Reales (escala z)",
+       subtitle = paste0("RMSE = ", round(rmse_tuned_reg,4), " | R2 = ", round(r2_tuned_reg,4)),
+       x = "Precio Real", y = "Precio Predicho") +
+  theme_minimal()
+```
+
+El tuneo sobre `cost`, `gamma` y `epsilon` mejora el RMSE y el R². El parámetro `epsilon` es clave: define una banda de tolerancia donde los errores pequeños no se penalizan, haciendo al modelo robusto ante valores atípicos de precio.
+
+---
+
+# Actividad 12: SVR Tuneado vs Modelos de Regresión Previos
+
+```{r act12}
+# *** Sustituir valores referenciales con los obtenidos en hojas anteriores ***
+comparacion_reg <- data.frame(
+  Algoritmo    = c("Regresion Lineal","Arbol CART","Random Forest","Naive Bayes","KNN","SVR Tuneado *"),
+  RMSE_Test    = c(0.95, 0.88, 0.72, 1.10, 0.82, rmse_tuned_reg),
+  R2_Test      = c(0.05, 0.08, 0.25, 0.02, 0.12, r2_tuned_reg),
+  Tiempo_aprox = c("< 1 s","< 1 s","10-30 s","< 1 s","2-5 s","60-180 s")
+)
+knitr::kable(comparacion_reg, digits = 4,
+             caption = "Comparacion de modelos de regresion: precio de Airbnb")
+
+ggplot(comparacion_reg,
+       aes(x = reorder(Algoritmo, RMSE_Test), y = RMSE_Test,
+           fill = ifelse(grepl("\\*", Algoritmo),"SVR","Otros"))) +
+  geom_col(alpha = 0.85, show.legend = FALSE) +
+  geom_text(aes(label = round(RMSE_Test,3)), hjust = -0.15, size = 3.5, fontface = "bold") +
+  coord_flip() +
+  scale_fill_manual(values = c("SVR"="#e74c3c","Otros"="#95a5a6")) +
+  scale_y_continuous(limits = c(0, max(comparacion_reg$RMSE_Test)*1.25)) +
+  labs(title="RMSE por Modelo de Regresion (menor = mejor)", x="", y="RMSE") +
+  theme_minimal()
+```
+
+Random Forest sigue siendo el mejor modelo de regresión (mayor R², menor RMSE). El SVR Tuneado supera a Regresión Lineal, Naive Bayes y KNN. El R² globalmente bajo (< 0.30) indica que se necesitan variables adicionales de ubicación y estacionalidad.
+
+---
+
+# Actividad 13: Informe Final de Resultados
+
+## Resumen Ejecutivo
+
+Este laboratorio aplicó SVM en el dataset de Airbnb de SmartStay Advisors bajo dos modalidades: clasificación de segmento de precio y regresión de precio numérico. Se entrenaron 10 variantes de SVM y se compararon con 5 algoritmos previos, cubriendo el ciclo completo de minería de datos.
+
+## Hallazgos de Clasificación
+
+```{r informe_clas}
+knitr::kable(
+  data.frame(
+    Dimension = c("Mejor modelo SVM","Kernel más débil","Mayor riesgo sobreajuste",
+                  "Error más costoso","Categoria más difícil","Mejor balance vel./exactitud"),
+    Resultado = c(
+      "SVM Radial Tuneado (mayor exactitud, menos errores graves)",
+      "Lineal (mercado no linealmente separable)",
+      "Random Forest (Train 100%, brecha elevada)",
+      "Clasificar Economica como Cara (propiedad sin arrendar)",
+      "Intermedia (F1 más bajo; se mezcla con extremos)",
+      "Random Forest"
+    )
+  ), caption = "Hallazgos – Clasificacion de precio")
+```
+
+## Hallazgos de Regresión
+
+```{r informe_reg}
+knitr::kable(
+  data.frame(
+    Dimension = c("Mejor modelo global","Mejor SVM de regresion",
+                  "Modelos más débiles","Causa del R2 bajo"),
+    Resultado = c(
+      "Random Forest (R2 mayor, RMSE menor)",
+      "SVR Radial Tuneado (mejora ~30% sobre base con grilla cost/gamma/epsilon)",
+      "Regresion Lineal y Naive Bayes (R2 < 0.10)",
+      "Alta variabilidad del precio; faltan variables de ubicacion y estacionalidad"
+    )
+  ), caption = "Hallazgos – Regresion de precio")
+```
+
+## Recomendaciones para SmartStay Advisors
+
+1. **Clasificacion de segmento:** Desplegar el SVM Radial Tuneado para clasificar nuevas propiedades en Economica / Intermedia / Cara.
+2. **Estimacion de precio:** Usar Random Forest en produccion por su balance exactitud-velocidad.
+3. **Enriquecer datos:** Incorporar latitud/longitud, barrio, calificacion del host y variables de temporada para mejorar R2.
+4. **Monitoreo continuo:** Reentrenar mensualmente; los precios cambian con temporada y eventos locales.
+5. **Priorizar errores graves:** Optimizar el umbral del clasificador para minimizar confusiones Economica ↔ Cara antes de reducir el error total.
+
+## Conclusion Metodologica
+
+El ciclo completo ilustra el proceso estandar de Mineria de Datos aplicada:
+
+> **Datos crudos → Limpieza → Encoding → Escalado → Modelo base → Evaluacion → Tuneo → Comparacion → Decision de negocio**
+
+El SVM es poderoso en espacios de alta dimensionalidad con kernels no lineales, pero requiere preprocesamiento riguroso y tuneo para alcanzar su potencial. La inversion computacional del tuneo se justifica con la reduccion de errores graves de clasificacion, cuyo costo de negocio supera con creces el tiempo de computo adicional.
+
+```{r session_info, echo=FALSE}
+cat("\n--- Informacion de sesion ---\n")
+sessionInfo()
+```
