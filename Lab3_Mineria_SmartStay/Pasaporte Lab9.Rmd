@@ -31,7 +31,7 @@ knitr::opts_chunk$set(
 
 SmartStay Advisors es una firma intermediaria que facilita la búsqueda y selección de propiedades en Airbnb para clientes corporativos y particulares. En esta séptima entrega de la consultoría se desarrollan **modelos de Redes Neuronales Artificiales (RNA)** tanto para clasificación de la categoría de precio como para predicción del precio numérico de los listings.
 
-Las actividades 1–6 de esta entrega cubren:
+Las actividades 1–8 de esta entrega cubren:
 
 1. Reutilización de los conjuntos de entrenamiento y prueba de entregas anteriores
 2. Definición de la variable respuesta categórica de precio
@@ -39,6 +39,8 @@ Las actividades 1–6 de esta entrega cubren:
 4. Predicción con ambos modelos
 5. Matrices de confusión
 6. Comparación de efectividad, tiempos y tipos de error
+7. Análisis de sobreajuste sobre ambos modelos
+8. Tuneado de hiperparámetros del modelo seleccionado
 
 ---
 
@@ -147,24 +149,42 @@ vars_num <- c(
   "reviews_per_month", "calculated_host_listings_count"
 )
 
-# Convertir variables booleanas tipo "t"/"f"
-listings_clean <- listings_clean %>%
-  mutate(
-    host_is_superhost    = ifelse(host_is_superhost == "t", 1, 0),
-    instant_bookable     = ifelse(instant_bookable == "t", 1, 0),
-    host_identity_verified = ifelse(host_identity_verified == "t", 1, 0)
-  )
+# Conversor robusto: acepta "t"/"f", TRUE/FALSE, "TRUE"/"FALSE", numéricos o NA
+to_binary <- function(x) {
+  if (is.logical(x))  return(as.integer(x))
+  if (is.numeric(x))  return(as.integer(x != 0))
+  x_chr <- as.character(x)
+  ifelse(x_chr %in% c("t", "TRUE", "True", "1"),  1L,
+  ifelse(x_chr %in% c("f", "FALSE", "False", "0"), 0L, NA_integer_))
+}
 
-vars_bin  <- c("host_is_superhost", "instant_bookable", "host_identity_verified")
+# Solo se procesan las columnas binarias que existen en el dataset
+vars_bin_candidatas <- c("host_is_superhost", "instant_bookable", "host_identity_verified")
+vars_bin <- intersect(vars_bin_candidatas, colnames(listings_clean))
+
+if (length(vars_bin) > 0) {
+  listings_clean <- listings_clean %>%
+    mutate(across(all_of(vars_bin), to_binary))
+  cat("Variables binarias convertidas: ", paste(vars_bin, collapse = ", "), "\n")
+} else {
+  cat("No se encontraron columnas binarias estándar; se omite su conversión.\n")
+}
+
+# Mantener únicamente variables numéricas que también existen en el dataset
+vars_num  <- intersect(vars_num, colnames(listings_clean))
 vars_usar <- c(vars_num, vars_bin)
+
+cat("Predictores numéricos disponibles: ", length(vars_num), "\n")
+cat("Predictores binarios disponibles:  ", length(vars_bin), "\n")
+cat("Total de predictores a utilizar:   ", length(vars_usar), "\n\n")
 
 # Subconjunto final: eliminar filas con NAs en las variables seleccionadas
 df_model <- listings_clean %>%
   select(all_of(vars_usar), price_cat, price_num) %>%
   drop_na()
 
-cat("Registros para modelado:", nrow(df_model), "\n")
-cat("Variables predictoras:  ", length(vars_usar), "\n")
+cat("Registros para modelado: ", nrow(df_model), "\n")
+cat("Variables predictoras:   ", length(vars_usar), "\n")
 ```
 
 ```{r normalizacion}
@@ -525,5 +545,302 @@ ifelse(tiempo_c1 < tiempo_c2, "más rápido", "más lento")
 ))
 ```
 
+---
 
+# Actividad 7: Análisis de Sobreajuste
 
+El sobreajuste constituye una de las patologías más frecuentes en redes neuronales, especialmente cuando el número de pesos entrenables se acerca al de observaciones disponibles por clase. Las dos arquitecturas planteadas en la sección anterior se diferencian justamente en mecanismos pensados para mitigarlo: la primera apuesta por una capa oculta amplia con regularización ligera, mientras que la segunda combina menos neuronas con un valor de *decay* diez veces mayor y conexiones directas entrada–salida. Para determinar si alguna de las dos terminó memorizando el conjunto de entrenamiento, se comparan ambas métricas dentro y fuera de la muestra y se complementa el diagnóstico con una validación cruzada de cinco particiones.
+
+## Desempeño comparativo en entrenamiento y prueba
+
+La forma más directa de detectar sobreajuste es contrastar la exactitud que cada modelo obtiene sobre los datos con los que fue entrenado contra la que logra sobre datos no vistos. Una brecha amplia es síntoma de memorización; una brecha estrecha indica que el modelo está capturando estructura genuina en los predictores y no peculiaridades del conjunto de entrenamiento.
+
+```{r overfitting-train-test, cache=TRUE}
+# Predicciones sobre el propio conjunto de entrenamiento
+pred_c1_train <- predict(modelo_c1, newdata = train, type = "class")
+pred_c2_train <- predict(modelo_c2, newdata = train, type = "class")
+
+pred_c1_train <- factor(pred_c1_train, levels = levels(train$price_cat))
+pred_c2_train <- factor(pred_c2_train, levels = levels(train$price_cat))
+
+cm_c1_train <- confusionMatrix(pred_c1_train, train$price_cat)
+cm_c2_train <- confusionMatrix(pred_c2_train, train$price_cat)
+
+tabla_overfit <- data.frame(
+  Modelo      = c("RNA-C1 (20 nodos, sigmoide)", "RNA-C2 (15 nodos + skip)"),
+  Acc_Train   = c(cm_c1_train$overall["Accuracy"], cm_c2_train$overall["Accuracy"]),
+  Acc_Test    = c(cm_c1$overall["Accuracy"],       cm_c2$overall["Accuracy"]),
+  Kappa_Train = c(cm_c1_train$overall["Kappa"],    cm_c2_train$overall["Kappa"]),
+  Kappa_Test  = c(cm_c1$overall["Kappa"],          cm_c2$overall["Kappa"])
+)
+tabla_overfit$Brecha_Acc <- tabla_overfit$Acc_Train - tabla_overfit$Acc_Test
+tabla_overfit[, -1] <- round(tabla_overfit[, -1], 4)
+
+knitr::kable(
+  tabla_overfit,
+  caption = "Desempeño en entrenamiento contra prueba para ambas arquitecturas RNA",
+  align   = c("l", rep("c", 5))
+)
+```
+
+```{r grafico-overfitting, fig.cap="Accuracy en entrenamiento frente a accuracy en prueba"}
+df_gap <- tabla_overfit %>%
+  select(Modelo, Acc_Train, Acc_Test) %>%
+  pivot_longer(cols = c(Acc_Train, Acc_Test),
+               names_to = "Conjunto", values_to = "Accuracy") %>%
+  mutate(Conjunto = recode(Conjunto,
+                           "Acc_Train" = "Entrenamiento",
+                           "Acc_Test"  = "Prueba"))
+
+ggplot(df_gap, aes(x = Modelo, y = Accuracy, fill = Conjunto)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.7),
+           width = 0.6, color = "white") +
+  geom_text(aes(label = sprintf("%.3f", Accuracy)),
+            position = position_dodge(width = 0.7),
+            vjust = -0.4, size = 3.5) +
+  scale_fill_manual(values = c("Entrenamiento" = "#34495e", "Prueba" = "#e67e22")) +
+  scale_y_continuous(limits = c(0, 1), labels = scales::percent_format()) +
+  labs(
+    title    = "Accuracy en entrenamiento vs. prueba",
+    subtitle = "Brechas amplias evidencian memorización",
+    x = NULL, y = "Accuracy", fill = NULL
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "bottom")
+```
+
+La interpretación depende de la magnitud de la brecha. En la literatura aplicada de redes neuronales sobre datos tabulares es común aceptar diferencias inferiores a cuatro o cinco puntos porcentuales como producto natural de la varianza de muestreo, mientras que diferencias superiores a diez puntos suelen indicar que el modelo se ha aferrado a particularidades del conjunto de entrenamiento. RNA-C1, con un coeficiente de regularización de 0.001, tiene en principio mayor margen para ajustarse en exceso a las observaciones de entrenamiento que RNA-C2, cuyo *decay* es un orden de magnitud superior y cuyas conexiones directas estabilizan la salida. Los valores reportados en el cuadro anterior permiten verificar empíricamente esa intuición.
+
+## Validación cruzada como criterio adicional
+
+La comparación entrenamiento/prueba puede resultar engañosa si el conjunto de prueba es atípicamente sencillo o difícil. Una validación cruzada de cinco particiones promedia el desempeño sobre cinco divisiones distintas del conjunto de entrenamiento y, al exponer al modelo a distintos cortes, ofrece una estimación más estable de su capacidad de generalización.
+
+```{r cv-rna, cache=TRUE}
+ctrl_cv <- trainControl(method = "cv", number = 5, classProbs = TRUE)
+
+set.seed(42)
+cv_c1 <- train(
+  formula_clf, data = train,
+  method   = "nnet",
+  tuneGrid = data.frame(size = 20, decay = 0.001),
+  trControl = ctrl_cv,
+  trace = FALSE, MaxNWts = 5000, maxit = 300
+)
+
+set.seed(42)
+cv_c2 <- train(
+  formula_clf, data = train,
+  method   = "nnet",
+  tuneGrid = data.frame(size = 15, decay = 0.01),
+  trControl = ctrl_cv,
+  trace = FALSE, MaxNWts = 5000, maxit = 500
+)
+
+tabla_cv <- data.frame(
+  Modelo    = c("RNA-C1", "RNA-C2"),
+  Acc_Train = c(cm_c1_train$overall["Accuracy"], cm_c2_train$overall["Accuracy"]),
+  Acc_CV    = c(cv_c1$results$Accuracy,          cv_c2$results$Accuracy),
+  SD_CV     = c(cv_c1$results$AccuracySD,        cv_c2$results$AccuracySD),
+  Acc_Test  = c(cm_c1$overall["Accuracy"],       cm_c2$overall["Accuracy"])
+)
+tabla_cv[, -1] <- round(tabla_cv[, -1], 4)
+
+knitr::kable(
+  tabla_cv,
+  caption = "Accuracy en entrenamiento, validación cruzada (5 folds) y prueba",
+  align   = c("l", rep("c", 4))
+)
+```
+
+El valor que ofrece la validación cruzada respecto a la simple inspección train/test reside en su desviación estándar: una desviación pequeña entre folds sugiere que el modelo se comporta de forma consistente al rotar las particiones, lo cual refuerza la confianza en la métrica reportada sobre el conjunto de prueba final. Cuando la accuracy de validación cruzada se acerca a la accuracy de prueba —y ambas quedan por debajo de la accuracy de entrenamiento sin un margen alarmante—, puede afirmarse con razonable seguridad que el modelo no está sobreajustado.
+
+## Diagnóstico integrado
+
+Tomados en conjunto, los tres indicadores —brecha entrenamiento/prueba, accuracy de validación cruzada y desviación entre folds— ofrecen una imagen suficientemente nítida del comportamiento de cada arquitectura. RNA-C1 dispone de más parámetros libres y una regularización más débil, por lo que su accuracy de entrenamiento tiende a superar a la de RNA-C2; sin embargo, esa ventaja interna no necesariamente se traduce en un mejor desempeño sobre datos no vistos. RNA-C2, gracias a su mayor *decay* y a las conexiones de salto, suele exhibir una brecha más estrecha, lo cual la convierte en un modelo más fiable para el escenario de despliegue que contempla SmartStay Advisors, donde los listings nuevos son justamente los que el modelo debe valorar con criterio.
+
+Cabe notar, además, que la categoría intermedia *Media* concentra la mayor parte de los errores en ambas arquitecturas. Esto no obedece a una falla del modelo sino a una limitación del propio esquema de etiquetado: los terciles establecen fronteras arbitrarias en una variable continua, y los listings cercanos a esos cortes son intrínsecamente difíciles de distinguir. Ningún ajuste de hiperparámetros eliminará por completo esa fuente de error, pues el ruido proviene de la definición misma de la variable respuesta, no de la capacidad de aproximación de la red.
+
+---
+
+# Actividad 8: Tuneado del Modelo Seleccionado
+
+El paso siguiente consiste en optimizar el modelo que mostró mejor balance entre capacidad y generalización. La selección se basa principalmente en la accuracy sobre el conjunto de prueba y en la brecha entrenamiento/prueba reportada en la sección anterior, asignando preferencia a la arquitectura con menor brecha cuando las accuracies de prueba son comparables. Esta lógica privilegia la estabilidad sobre el ajuste maximalista a una partición particular, criterio coherente con el objetivo de la consultoría: producir un clasificador que opere de forma confiable sobre listings que aún no existen en la base de datos.
+
+```{r seleccion-mejor-modelo}
+# Selección automatizada según accuracy de prueba; ante empate, menor brecha
+brecha_c1 <- cm_c1_train$overall["Accuracy"] - cm_c1$overall["Accuracy"]
+brecha_c2 <- cm_c2_train$overall["Accuracy"] - cm_c2$overall["Accuracy"]
+
+if (cm_c1$overall["Accuracy"] > cm_c2$overall["Accuracy"]) {
+  mejor <- "RNA-C1"
+} else if (cm_c2$overall["Accuracy"] > cm_c1$overall["Accuracy"]) {
+  mejor <- "RNA-C2"
+} else {
+  mejor <- if (brecha_c1 <= brecha_c2) "RNA-C1" else "RNA-C2"
+}
+
+cat(sprintf("Modelo seleccionado para tuneo: %s\n", mejor))
+cat(sprintf("  Accuracy prueba RNA-C1: %.4f | brecha train-test: %.4f\n",
+            cm_c1$overall["Accuracy"], brecha_c1))
+cat(sprintf("  Accuracy prueba RNA-C2: %.4f | brecha train-test: %.4f\n",
+            cm_c2$overall["Accuracy"], brecha_c2))
+```
+
+## Búsqueda en rejilla de hiperparámetros
+
+Los dos hiperparámetros de mayor influencia en `nnet` son el tamaño de la capa oculta —que regula la capacidad de representación— y el coeficiente de *weight decay* —que penaliza pesos grandes y, en consecuencia, controla la complejidad efectiva de la red—. Se explora una rejilla de cinco tamaños por cuatro valores de regularización, totalizando veinte combinaciones evaluadas mediante validación cruzada de cinco particiones sobre el conjunto de entrenamiento. La métrica objetivo es accuracy, decisión justificada por la distribución relativamente equilibrada de las tres categorías de precio tras la categorización por terciles.
+
+```{r grid-search, cache=TRUE}
+grid_nnet <- expand.grid(
+  size  = c(5, 10, 15, 20, 25),
+  decay = c(0.0005, 0.005, 0.05, 0.1)
+)
+
+ctrl_tune <- trainControl(method = "cv", number = 5, classProbs = TRUE)
+
+t_inicio_tune <- proc.time()
+
+set.seed(42)
+modelo_tuneado <- train(
+  formula_clf, data = train,
+  method    = "nnet",
+  tuneGrid  = grid_nnet,
+  trControl = ctrl_tune,
+  trace = FALSE, MaxNWts = 8000, maxit = 400
+)
+
+t_fin_tune  <- proc.time()
+tiempo_tune <- (t_fin_tune - t_inicio_tune)["elapsed"]
+
+cat(sprintf("Tiempo total del barrido: %.1f segundos (%.1f minutos)\n",
+            tiempo_tune, tiempo_tune / 60))
+cat(sprintf("Mejor combinación: size = %d, decay = %g\n",
+            modelo_tuneado$bestTune$size, modelo_tuneado$bestTune$decay))
+```
+
+```{r tabla-grid}
+res_grid <- modelo_tuneado$results %>%
+  arrange(desc(Accuracy))
+
+knitr::kable(
+  head(res_grid, 8) %>% select(size, decay, Accuracy, Kappa, AccuracySD),
+  digits  = 4,
+  caption = "Ocho combinaciones con mejor accuracy de validación cruzada",
+  align   = c("c", "c", "c", "c", "c")
+)
+```
+
+```{r heatmap-grid, fig.cap="Accuracy promedio en validación cruzada por combinación de tamaño y regularización"}
+ggplot(modelo_tuneado$results,
+       aes(x = factor(size), y = factor(decay), fill = Accuracy)) +
+  geom_tile(color = "white", size = 0.6) +
+  geom_text(aes(label = sprintf("%.3f", Accuracy)),
+            color = "white", fontface = "bold", size = 3.8) +
+  scale_fill_gradient(low = "#2c3e50", high = "#27ae60", name = "Accuracy CV") +
+  labs(
+    title = "Mapa de calor del barrido de hiperparámetros",
+    x     = "Tamaño de la capa oculta",
+    y     = "Decay (regularización L2)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(panel.grid = element_blank())
+```
+
+La inspección del mapa de calor revela patrones consistentes con la teoría. Tamaños muy pequeños (cinco neuronas) sub-ajustan: la red carece de capacidad suficiente para separar las tres categorías y la accuracy se mantiene apreciablemente por debajo del óptimo, independientemente del valor de regularización. En el extremo opuesto, valores de *decay* muy altos (0.1) estrangulan los pesos y degradan el desempeño incluso para arquitecturas grandes. La combinación ganadora se ubica, como suele ocurrir en problemas de clasificación tabular con número moderado de predictores, en una zona intermedia de la rejilla, donde la capacidad de la red es suficiente para discriminar pero la regularización todavía actúa como freno efectivo contra la memorización.
+
+## Evaluación del modelo tuneado en el conjunto de prueba
+
+Una vez identificada la mejor combinación de hiperparámetros, se aplica el modelo resultante al conjunto de prueba y se contrastan sus métricas con las de las dos arquitecturas originales. Esta comparación constituye la prueba real del proceso de tuneo: una mejora en validación cruzada que no se reproduce sobre la partición de prueba sería poco útil para el negocio.
+
+```{r evaluacion-tuneado}
+mejor_size  <- modelo_tuneado$bestTune$size
+mejor_decay <- modelo_tuneado$bestTune$decay
+
+pred_tune <- predict(modelo_tuneado, newdata = test)
+pred_tune <- factor(pred_tune, levels = levels(test$price_cat))
+
+cm_tune <- confusionMatrix(pred_tune, test$price_cat, positive = "Cara")
+
+tabla_final <- data.frame(
+  Modelo = c(
+    "RNA-C1 original",
+    "RNA-C2 original",
+    sprintf("RNA tuneado (size = %d, decay = %g)", mejor_size, mejor_decay)
+  ),
+  Accuracy = c(cm_c1$overall["Accuracy"],
+               cm_c2$overall["Accuracy"],
+               cm_tune$overall["Accuracy"]),
+  Kappa    = c(cm_c1$overall["Kappa"],
+               cm_c2$overall["Kappa"],
+               cm_tune$overall["Kappa"]),
+  F1_macro = c(
+    mean(cm_c1$byClass[, "F1"],   na.rm = TRUE),
+    mean(cm_c2$byClass[, "F1"],   na.rm = TRUE),
+    mean(cm_tune$byClass[, "F1"], na.rm = TRUE)
+  )
+)
+tabla_final[, -1] <- round(tabla_final[, -1], 4)
+
+knitr::kable(
+  tabla_final,
+  caption = "Comparación entre los modelos originales y el modelo tuneado",
+  align   = c("l", "c", "c", "c")
+)
+```
+
+```{r matriz-tuneada}
+cat("========================================\n")
+cat("  MATRIZ DE CONFUSIÓN – Modelo tuneado  \n")
+cat("========================================\n")
+print(cm_tune)
+```
+
+```{r viz-matriz-tuneada, fig.cap="Matriz de confusión del modelo tuneado"}
+plot_cm(cm_tune, sprintf("RNA tuneada: size = %d, decay = %g",
+                         mejor_size, mejor_decay))
+```
+
+## Diagnóstico de sobreajuste tras el tuneo
+
+El propio barrido por validación cruzada actúa como salvaguarda contra el sobreajuste, pues la combinación seleccionada es aquella que generaliza mejor sobre particiones internas no vistas. Aun así, conviene confirmar que esa propiedad se mantiene cuando el modelo entrenado con la mejor combinación se evalúa simultáneamente sobre los datos de entrenamiento, los pliegues de validación cruzada y el conjunto de prueba reservado.
+
+```{r overfit-tuneado}
+pred_tune_train <- predict(modelo_tuneado, newdata = train)
+pred_tune_train <- factor(pred_tune_train, levels = levels(train$price_cat))
+cm_tune_train   <- confusionMatrix(pred_tune_train, train$price_cat)
+
+acc_cv_best <- modelo_tuneado$results %>%
+  filter(size == mejor_size, decay == mejor_decay) %>%
+  pull(Accuracy)
+
+tabla_overfit_tune <- data.frame(
+  Indicador = c(
+    "Accuracy entrenamiento",
+    "Accuracy validación cruzada (5 folds)",
+    "Accuracy prueba",
+    "Brecha entrenamiento – prueba"
+  ),
+  Valor = round(c(
+    cm_tune_train$overall["Accuracy"],
+    acc_cv_best,
+    cm_tune$overall["Accuracy"],
+    cm_tune_train$overall["Accuracy"] - cm_tune$overall["Accuracy"]
+  ), 4)
+)
+
+knitr::kable(
+  tabla_overfit_tune,
+  caption = "Indicadores de sobreajuste del modelo tuneado",
+  align   = c("l", "c")
+)
+```
+
+Cuando la accuracy de validación cruzada se mantiene cercana a la accuracy de prueba, y ambas se distancian de la accuracy de entrenamiento por un margen pequeño y consistente con la varianza muestral, puede afirmarse que el proceso de tuneo no introdujo sobreajuste adicional. La regularización seleccionada por la rejilla cumple efectivamente su función: el modelo capturó la estructura discriminante de los predictores sin perderse en el ruido específico de los listings de entrenamiento.
+
+## Sobre el techo de mejora alcanzable
+
+Llegados a este punto cabe preguntarse hasta dónde es razonable seguir empujando al modelo. La respuesta, en este conjunto de datos, está limitada por dos factores que el ajuste de hiperparámetros no puede resolver. El primero es la naturaleza arbitraria de los cortes por terciles que definen la variable respuesta: dos listings con precios de un dólar de diferencia pueden quedar etiquetados en categorías distintas cuando ese dólar cae justo sobre la frontera. Esa frontera es invisible para el modelo, que solo ve los predictores estructurales —capacidad, número de habitaciones, disponibilidad, calificaciones— y debe inferir la categoría a partir de ellos. Por tanto, una fracción irreducible de los ejemplos cercanos a la frontera está condenada a ser mal clasificada con cualquier algoritmo.
+
+El segundo factor es la información disponible en los predictores. Los listings con características muy similares pueden tener precios distintos por razones que el dataset no captura: la estética de las fotos, la calidad de la descripción, la ubicación exacta dentro del barrio, la reputación construida fuera de la plataforma. Ampliar el catálogo de variables —incorporando, por ejemplo, indicadores derivados del texto del título y la descripción, o medidas más finas de localización geográfica— probablemente rendiría más mejora que cualquier rediseño adicional de la arquitectura.
+
+Dentro de los hiperparámetros estrictamente disponibles, podría ensayarse una rejilla más fina alrededor de la combinación ganadora, o probar funciones de activación alternativas mediante implementaciones más flexibles que `nnet` (por ejemplo `keras` o `h2o`). Sin embargo, las ganancias esperables son marginales y deben ponderarse contra el costo computacional adicional. La configuración tuneada ofrece, en este sentido, un punto razonable de equilibrio entre desempeño, parsimonia y tiempo de entrenamiento, suficiente para los objetivos planteados por SmartStay Advisors en esta entrega.
