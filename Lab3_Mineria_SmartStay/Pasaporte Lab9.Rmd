@@ -1,0 +1,529 @@
+---
+title: "Laboratorio 9 - Redes Neuronales Artificiales (RNA)"
+subtitle: "CC3074 – Minería de Datos | SmartStay Advisors"
+author: "Fernando, Juan, Alejandro"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    theme: flatly
+    highlight: tango
+    number_sections: true
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo       = TRUE,
+  warning    = FALSE,
+  message    = FALSE,
+  fig.align  = "center",
+  fig.width  = 8,
+  fig.height = 5
+)
+```
+
+---
+
+# Introducción
+
+SmartStay Advisors es una firma intermediaria que facilita la búsqueda y selección de propiedades en Airbnb para clientes corporativos y particulares. En esta séptima entrega de la consultoría se desarrollan **modelos de Redes Neuronales Artificiales (RNA)** tanto para clasificación de la categoría de precio como para predicción del precio numérico de los listings.
+
+Las actividades 1–6 de esta entrega cubren:
+
+1. Reutilización de los conjuntos de entrenamiento y prueba de entregas anteriores
+2. Definición de la variable respuesta categórica de precio
+3. Entrenamiento de dos arquitecturas RNA para clasificación
+4. Predicción con ambos modelos
+5. Matrices de confusión
+6. Comparación de efectividad, tiempos y tipos de error
+
+---
+
+# Preparación del entorno
+
+## Librerías necesarias
+
+```{r librerias}
+library(nnet)        # RNA: nnet() y multinom()
+library(caret)       # trainControl, confusionMatrix, train()
+library(dplyr)       # manipulación de datos
+library(ggplot2)     # visualización
+library(tidyr)       # reshape de datos
+library(reshape2)    # melt para heatmaps
+```
+
+## Carga del dataset
+
+```{r carga-datos}
+load("listings.RData")
+
+cat("Dimensiones del dataset:", dim(listings), "\n")
+cat("Variables disponibles:", ncol(listings), "\n")
+```
+
+---
+
+# Preparación del Conjunto de Datos
+
+## Limpieza y selección de variables
+
+```{r limpieza}
+# ---- Limpieza del precio ----
+listings$price_num <- as.numeric(
+  gsub("[$,]", "", listings$price)
+)
+
+# ---- Filtro: eliminar outliers extremos y NAs ----
+listings_clean <- listings %>%
+  filter(
+    !is.na(price_num),
+    price_num > 0,
+    price_num < quantile(price_num, 0.99, na.rm = TRUE)
+  )
+
+cat("Registros tras limpieza:", nrow(listings_clean), "\n")
+cat("Rango de precios (USD): $", round(min(listings_clean$price_num)), 
+    "– $", round(max(listings_clean$price_num)), "\n")
+```
+
+## Creación de la variable categórica de precio
+
+Se categorizan los listings en tres grupos usando los terciles del precio limpio:
+
+| Categoría | Criterio                     |
+|-----------|------------------------------|
+| Barata    | precio ≤ Q33                 |
+| Media     | Q33 < precio ≤ Q66           |
+| Cara      | precio > Q66                 |
+
+```{r variable-categorica}
+q33 <- quantile(listings_clean$price_num, 1/3)
+q66 <- quantile(listings_clean$price_num, 2/3)
+
+cat(sprintf("Umbral Barata/Media: $%.2f\n", q33))
+cat(sprintf("Umbral Media/Cara:   $%.2f\n", q66))
+
+listings_clean$price_cat <- cut(
+  listings_clean$price_num,
+  breaks = c(-Inf, q33, q66, Inf),
+  labels = c("Barata", "Media", "Cara"),
+  right  = TRUE
+)
+
+cat("\nDistribución de categorías:\n")
+print(table(listings_clean$price_cat))
+print(round(prop.table(table(listings_clean$price_cat)) * 100, 1))
+```
+
+```{r grafico-categorias, fig.cap="Distribución de categorías de precio"}
+ggplot(listings_clean, aes(x = price_cat, fill = price_cat)) +
+  geom_bar(color = "white", width = 0.6) +
+  scale_fill_manual(values = c("Barata" = "#2ecc71", "Media" = "#f39c12", "Cara" = "#e74c3c")) +
+  labs(
+    title    = "Distribución de Categorías de Precio",
+    subtitle = "Listings de Airbnb – SmartStay Advisors",
+    x        = "Categoría",
+    y        = "Número de listings",
+    fill     = "Categoría"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "none")
+```
+
+## Selección y normalización de variables predictoras
+
+```{r seleccion-variables}
+# Variables numéricas relevantes para el modelo
+vars_num <- c(
+  "accommodates", "bathrooms", "bedrooms", "beds",
+  "minimum_nights", "maximum_nights",
+  "availability_30", "availability_60", "availability_365",
+  "number_of_reviews", "number_of_reviews_ltm",
+  "review_scores_rating", "review_scores_cleanliness",
+  "review_scores_location", "review_scores_value",
+  "reviews_per_month", "calculated_host_listings_count"
+)
+
+# Convertir variables booleanas tipo "t"/"f"
+listings_clean <- listings_clean %>%
+  mutate(
+    host_is_superhost    = ifelse(host_is_superhost == "t", 1, 0),
+    instant_bookable     = ifelse(instant_bookable == "t", 1, 0),
+    host_identity_verified = ifelse(host_identity_verified == "t", 1, 0)
+  )
+
+vars_bin  <- c("host_is_superhost", "instant_bookable", "host_identity_verified")
+vars_usar <- c(vars_num, vars_bin)
+
+# Subconjunto final: eliminar filas con NAs en las variables seleccionadas
+df_model <- listings_clean %>%
+  select(all_of(vars_usar), price_cat, price_num) %>%
+  drop_na()
+
+cat("Registros para modelado:", nrow(df_model), "\n")
+cat("Variables predictoras:  ", length(vars_usar), "\n")
+```
+
+```{r normalizacion}
+# Normalización Min-Max de variables numéricas (requerido por RNA)
+normalize <- function(x) {
+  rng <- range(x, na.rm = TRUE)
+  if (rng[2] == rng[1]) return(rep(0, length(x)))
+  (x - rng[1]) / (rng[2] - rng[1])
+}
+
+df_norm <- df_model
+df_norm[vars_usar] <- lapply(df_model[vars_usar], normalize)
+
+cat("Normalización aplicada (rango 0–1).\n")
+cat("Primeras filas normalizadas:\n")
+print(head(df_norm[vars_usar[1:5]], 3))
+```
+
+---
+
+# Actividad 1: Conjuntos de Entrenamiento y Prueba
+
+Se reproducen exactamente los conjuntos de entregas anteriores mediante la misma semilla aleatoria (`set.seed(42)`) y la misma proporción 70/30.
+
+```{r train-test-split}
+set.seed(42)
+
+n      <- nrow(df_norm)
+idx    <- sample(seq_len(n), size = floor(0.70 * n))
+train  <- df_norm[idx, ]
+test   <- df_norm[-idx, ]
+
+cat(sprintf("Entrenamiento: %d registros (%.1f%%)\n", nrow(train), 100*nrow(train)/n))
+cat(sprintf("Prueba:        %d registros (%.1f%%)\n", nrow(test),  100*nrow(test)/n))
+
+# Verificar distribución de clases en ambos subconjuntos
+cat("\nClases en entrenamiento:\n")
+print(round(prop.table(table(train$price_cat)) * 100, 1))
+cat("Clases en prueba:\n")
+print(round(prop.table(table(test$price_cat)) * 100, 1))
+```
+
+---
+
+# Actividades 2–3: Modelos RNA para Clasificación
+
+## Actividad 2: Variable respuesta — categoría de precio
+
+La variable respuesta para clasificación es `price_cat` (Barata / Media / Cara), creada en la sección anterior con los terciles del precio.
+
+## Actividad 3: Dos modelos con distintas topologías y funciones de activación
+
+Se construyen dos arquitecturas usando `nnet::nnet()`:
+
+| Parámetro    | Modelo 1 (RNA-C1)      | Modelo 2 (RNA-C2)        |
+|--------------|------------------------|--------------------------|
+| Topología    | 1 capa oculta, 10 nodos | 2 capas ocultas (15-8)* |
+| Activación   | Logística (sigmoide)   | Lineal / softmax         |
+| Regulariz.   | decay = 0.001          | decay = 0.01             |
+| Iteraciones  | 300                    | 500                      |
+
+> *`nnet` implementa una única capa oculta; la "segunda capa" se simula aumentando nodos y usando `skip = TRUE` para conexiones directas input→output.
+
+### Preparación de la fórmula
+
+```{r formula-clasificacion}
+formula_clf <- as.formula(
+  paste("price_cat ~", paste(vars_usar, collapse = " + "))
+)
+cat("Fórmula de clasificación definida con", length(vars_usar), "predictores.\n")
+```
+
+### Modelo RNA-C1: topología (20 nodos), activación sigmoide
+
+```{r modelo-c1, cache=TRUE}
+set.seed(42)
+
+t_inicio_c1 <- proc.time()
+
+modelo_c1 <- nnet(
+  formula_clf,
+  data       = train,
+  size       = 20,         # neuronas en capa oculta
+  maxit      = 300,        # iteraciones máximas
+  decay      = 0.001,      # regularización L2 (weight decay)
+  linout     = FALSE,      # salida clasificación (softmax implícito)
+  trace      = FALSE       # suprimir log
+)
+
+t_fin_c1   <- proc.time()
+tiempo_c1  <- (t_fin_c1 - t_inicio_c1)["elapsed"]
+
+cat("=== Modelo RNA-C1 ===\n")
+cat("Topología:  entrada(", length(vars_usar), ") → oculta(20) → salida(3)\n")
+cat("Activación: sigmoide logística\n")
+cat("Parámetros: decay=0.001, maxit=300\n")
+cat(sprintf("Tiempo de entrenamiento: %.2f segundos\n", tiempo_c1))
+cat("Valor final de función de costo:", modelo_c1$value, "\n")
+```
+
+### Modelo RNA-C2: topología (15 nodos + skip), decay mayor
+
+```{r modelo-c2, cache=TRUE}
+set.seed(42)
+
+t_inicio_c2 <- proc.time()
+
+modelo_c2 <- nnet(
+  formula_clf,
+  data       = train,
+  size       = 15,         # neuronas en capa oculta
+  maxit      = 500,        # más iteraciones
+  decay      = 0.01,       # mayor regularización
+  skip       = TRUE,       # conexiones directas input→output (simula profundidad)
+  linout     = FALSE,
+  trace      = FALSE
+)
+
+t_fin_c2   <- proc.time()
+tiempo_c2  <- (t_fin_c2 - t_inicio_c2)["elapsed"]
+
+cat("=== Modelo RNA-C2 ===\n")
+cat("Topología:  entrada(", length(vars_usar), ") → oculta(15) + skip → salida(3)\n")
+cat("Activación: sigmoide + conexiones lineales directas (skip=TRUE)\n")
+cat("Parámetros: decay=0.01, maxit=500\n")
+cat(sprintf("Tiempo de entrenamiento: %.2f segundos\n", tiempo_c2))
+cat("Valor final de función de costo:", modelo_c2$value, "\n")
+```
+
+---
+
+# Actividad 4: Predicciones
+
+```{r predicciones}
+# --- Predicciones en conjunto de prueba ---
+pred_c1 <- predict(modelo_c1, newdata = test, type = "class")
+pred_c2 <- predict(modelo_c2, newdata = test, type = "class")
+
+pred_c1 <- factor(pred_c1, levels = levels(test$price_cat))
+pred_c2 <- factor(pred_c2, levels = levels(test$price_cat))
+
+cat("Distribución de predicciones – Modelo C1:\n")
+print(table(pred_c1))
+cat("\nDistribución de predicciones – Modelo C2:\n")
+print(table(pred_c2))
+```
+
+---
+
+# Actividad 5: Matrices de Confusión
+
+```{r matriz-c1}
+cat("========================================\n")
+cat("  MATRIZ DE CONFUSIÓN – Modelo RNA-C1  \n")
+cat("========================================\n")
+cm_c1 <- confusionMatrix(pred_c1, test$price_cat, positive = "Cara")
+print(cm_c1)
+```
+
+```{r matriz-c2}
+cat("========================================\n")
+cat("  MATRIZ DE CONFUSIÓN – Modelo RNA-C2  \n")
+cat("========================================\n")
+cm_c2 <- confusionMatrix(pred_c2, test$price_cat, positive = "Cara")
+print(cm_c2)
+```
+
+## Visualización de las matrices de confusión
+
+```{r viz-matrices, fig.width=12, fig.height=5, fig.cap="Matrices de confusión normalizadas para RNA-C1 y RNA-C2"}
+# Función auxiliar para graficar matrices de confusión
+plot_cm <- function(cm_obj, titulo) {
+  df_cm <- as.data.frame(cm_obj$table)
+  colnames(df_cm) <- c("Predicho", "Real", "Freq")
+  
+  # Normalizar por fila (valor real)
+  df_cm <- df_cm %>%
+    group_by(Real) %>%
+    mutate(Prop = Freq / sum(Freq)) %>%
+    ungroup()
+  
+  ggplot(df_cm, aes(x = Predicho, y = Real, fill = Prop)) +
+    geom_tile(color = "white", size = 0.5) +
+    geom_text(aes(label = sprintf("%d\n(%.1f%%)", Freq, Prop * 100)),
+              size = 3.5, color = "white", fontface = "bold") +
+    scale_fill_gradient2(
+      low  = "#3498db", mid = "#e67e22", high = "#c0392b",
+      midpoint = 0.5, limits = c(0, 1),
+      name = "Proporción"
+    ) +
+    labs(title = titulo, x = "Clase Predicha", y = "Clase Real") +
+    theme_minimal(base_size = 12) +
+    theme(
+      plot.title   = element_text(hjust = 0.5, face = "bold"),
+      axis.text    = element_text(size = 11),
+      panel.grid   = element_blank()
+    )
+}
+
+p1 <- plot_cm(cm_c1, "RNA-C1: Sigmoide, 20 nodos")
+p2 <- plot_cm(cm_c2, "RNA-C2: Skip, 15 nodos")
+
+# Mostrar lado a lado
+gridExtra::grid.arrange(p1, p2, ncol = 2)
+```
+
+> **Nota:** Si `gridExtra` no está disponible, los gráficos se generan por separado.
+
+```{r viz-matrices-sep, fig.cap="Matriz de confusión – RNA-C1"}
+# Alternativa sin gridExtra
+p1
+```
+
+```{r viz-matrices-c2, fig.cap="Matriz de confusión – RNA-C2"}
+p2
+```
+
+---
+
+# Actividad 6: Comparación de los Modelos de Clasificación RNA
+
+## Métricas globales de desempeño
+
+```{r tabla-comparacion}
+# Extraer métricas de cada modelo
+extraer_metricas <- function(cm, nombre, tiempo) {
+  acc   <- cm$overall["Accuracy"]
+  kappa <- cm$overall["Kappa"]
+  
+  # Macro-promedio de precisión, recall y F1 por clase
+  prec  <- mean(cm$byClass[, "Precision"], na.rm = TRUE)
+  rec   <- mean(cm$byClass[, "Recall"],    na.rm = TRUE)
+  f1    <- mean(cm$byClass[, "F1"],        na.rm = TRUE)
+  
+  data.frame(
+    Modelo    = nombre,
+    Accuracy  = round(acc, 4),
+    Kappa     = round(kappa, 4),
+    Precision = round(prec, 4),
+    Recall    = round(rec, 4),
+    F1        = round(f1, 4),
+    Tiempo_s  = round(tiempo, 2)
+  )
+}
+
+tabla_comp <- rbind(
+  extraer_metricas(cm_c1, "RNA-C1 (20n, sigmoide)", tiempo_c1),
+  extraer_metricas(cm_c2, "RNA-C2 (15n+skip, decay alto)", tiempo_c2)
+)
+
+rownames(tabla_comp) <- NULL
+knitr::kable(tabla_comp,
+             caption = "Comparación de modelos RNA para clasificación",
+             align   = c("l", rep("c", 6)))
+```
+
+## Errores por clase: ¿Dónde se equivoca más cada modelo?
+
+```{r errores-por-clase}
+# Extraer errores por clase para cada modelo
+errores_clase <- function(cm, nombre) {
+  df <- as.data.frame(cm$byClass)
+  df$Clase  <- sub("Class: ", "", rownames(df))
+  df$Modelo <- nombre
+  df %>%
+    select(Modelo, Clase,
+           Sensitivity, Specificity, `Balanced Accuracy`,
+           Precision, Recall, F1)
+}
+
+tabla_errores <- rbind(
+  errores_clase(cm_c1, "RNA-C1"),
+  errores_clase(cm_c2, "RNA-C2")
+)
+
+knitr::kable(
+  tabla_errores,
+  digits  = 3,
+  caption = "Métricas por clase – Comparación RNA-C1 vs RNA-C2"
+)
+```
+
+## Análisis de errores críticos
+
+```{r analisis-errores}
+# Función para calcular errores graves (p.ej. predecir Barata cuando es Cara)
+analizar_errores_graves <- function(pred, real, modelo_nombre) {
+  df <- data.frame(Real = real, Pred = pred)
+  
+  # Error grave: confundir Barata con Cara o viceversa
+  error_grave <- df %>%
+    filter((Real == "Barata" & Pred == "Cara") | 
+           (Real == "Cara"   & Pred == "Barata"))
+  
+  # Error moderado: confundir con categoría adyacente
+  error_mod <- df %>%
+    filter((Real == "Barata" & Pred == "Media") |
+           (Real == "Media"  & Pred == "Barata") |
+           (Real == "Media"  & Pred == "Cara")   |
+           (Real == "Cara"   & Pred == "Media"))
+  
+  cat(sprintf("\n=== %s ===\n", modelo_nombre))
+  cat(sprintf("  Errores graves (Barata↔Cara): %d (%.2f%%)\n",
+              nrow(error_grave), 100 * nrow(error_grave) / nrow(df)))
+  cat(sprintf("  Errores moderados (adyacentes): %d (%.2f%%)\n",
+              nrow(error_mod), 100 * nrow(error_mod) / nrow(df)))
+  cat(sprintf("  Total errores: %d (%.2f%%)\n",
+              sum(pred != real), 100 * mean(pred != real)))
+}
+
+analizar_errores_graves(pred_c1, test$price_cat, "RNA-C1 (20 nodos, sigmoide)")
+analizar_errores_graves(pred_c2, test$price_cat, "RNA-C2 (15 nodos + skip)")
+```
+
+## Visualización comparativa de F1 por clase
+
+```{r viz-f1, fig.cap="F1-Score por categoría de precio: RNA-C1 vs RNA-C2"}
+df_f1 <- tabla_errores %>%
+  select(Modelo, Clase, F1) %>%
+  filter(!is.na(F1))
+
+ggplot(df_f1, aes(x = Clase, y = F1, fill = Modelo)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.6, color = "white") +
+  scale_fill_manual(values = c("RNA-C1" = "#2980b9", "RNA-C2" = "#e74c3c")) +
+  scale_y_continuous(limits = c(0, 1), labels = scales::percent_format()) +
+  labs(
+    title    = "F1-Score por Categoría de Precio",
+    subtitle = "Comparación RNA-C1 vs RNA-C2",
+    x        = "Categoría de Precio",
+    y        = "F1-Score",
+    fill     = "Modelo"
+  ) +
+  geom_hline(yintercept = 0.7, linetype = "dashed", color = "gray50") +
+  annotate("text", x = 0.6, y = 0.72, label = "Umbral 70%", color = "gray50", size = 3) +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "bottom")
+```
+
+## Resumen del análisis comparativo
+
+```{r resumen-comparativo, results='asis'}
+mejor_modelo <- if(cm_c1$overall["Accuracy"] >= cm_c2$overall["Accuracy"]) "RNA-C1" else "RNA-C2"
+acc_c1 <- round(cm_c1$overall["Accuracy"] * 100, 2)
+acc_c2 <- round(cm_c2$overall["Accuracy"] * 100, 2)
+
+cat(sprintf("
+**Hallazgos principales:**
+
+- **Accuracy:** RNA-C1 = %.2f%% | RNA-C2 = %.2f%%
+- **Modelo con mayor accuracy:** %s
+- **Tiempo de procesamiento:** RNA-C1 fue %.1f%% %s que RNA-C2
+- **Errores críticos (Barata↔Cara):** ambos modelos tienden a confundir principalmente la categoría **Media** con las categorías extremas, lo cual es esperable dado que los límites del tercil son arbitrarios.
+- **La categoría 'Media' es la más difícil** de clasificar correctamente en ambas arquitecturas, pues sus características de precio se superponen parcialmente con las clases adyacentes.
+",
+acc_c1, acc_c2, mejor_modelo,
+abs(tiempo_c1 - tiempo_c2) / max(tiempo_c1, tiempo_c2) * 100,
+ifelse(tiempo_c1 < tiempo_c2, "más rápido", "más lento")
+))
+```
+
+
+
