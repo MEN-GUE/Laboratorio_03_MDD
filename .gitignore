@@ -6,3 +6,8 @@
 .Ruserdata
 # Ignorar el dataset para no saturar el repositorio
 listings.RData
+.md
+.claude
+CLAUDE.md
+.csv
+/.csv

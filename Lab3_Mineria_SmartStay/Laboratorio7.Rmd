@@ -3,6 +3,8 @@ title: "Laboratorio 6 - Modelos de Regresión Logística"
 author: "José Antón, Juan Fernando Menéndez, Fernando Mendoza"
 date: "`r Sys.Date()`"
 output:
+  pdf_document:
+    toc: true
   html_document:
     toc: true
     theme: flatly
