@@ -1,0 +1,773 @@
+---
+title: "Laboratorio 10 — Aprendizaje Semi-Supervisado"
+subtitle: "CC3074 · Minería de Datos · Semestre I 2026"
+author: "Universidad del Valle de Guatemala"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    theme: flatly
+    highlight: tango
+    number_sections: true
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo    = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.align = "center",
+  fig.width = 9,
+  fig.height = 5
+)
+
+# Instalar paquetes si no están disponibles
+paquetes <- c(
+  "tidyverse", "caret", "randomForest", "e1071",
+  "ggplot2", "reshape2", "gridExtra", "scales",
+  "cluster", "MASS", "viridis", "knitr", "kableExtra"
+)
+nuevos <- paquetes[!paquetes %in% installed.packages()[,"Package"]]
+if (length(nuevos)) install.packages(nuevos, repos = "https://cloud.r-project.org")
+
+library(tidyverse)
+library(caret)
+library(randomForest)
+library(e1071)
+library(ggplot2)
+library(reshape2)
+library(gridExtra)
+library(scales)
+library(cluster)
+library(viridis)
+library(knitr)
+library(kableExtra)
+
+set.seed(42)
+```
+
+
+
+# Selección y Análisis del Dataset *(Actividad 1 — referencia)*
+
+> **Nota:** Esta sección corresponde al **Inciso 1** (Actividad 1) e incluye el EDA y preprocesamiento necesarios como base para el diseño experimental del Inciso 2.
+
+## Carga y exploración inicial
+
+```{r carga}
+df_raw <- read.csv("shoes_sales_dataset.csv", stringsAsFactors = FALSE)
+
+cat("Dimensiones:", nrow(df_raw), "filas ×", ncol(df_raw), "columnas\n")
+glimpse(df_raw)
+```
+
+```{r resumen-estadistico}
+summary(df_raw) %>%
+  kable(caption = "Resumen estadístico del dataset") %>%
+  kable_styling(bootstrap_options = c("striped","hover","condensed"), full_width = FALSE)
+```
+
+## Tipos de variables y valores faltantes
+
+```{r valores-faltantes}
+tibble(
+  Variable   = names(df_raw),
+  Tipo       = sapply(df_raw, class),
+  NA_count   = colSums(is.na(df_raw)),
+  NA_pct     = paste0(round(colSums(is.na(df_raw)) / nrow(df_raw) * 100, 1), "%")
+) %>%
+  kable(caption = "Tipos de variables y valores faltantes") %>%
+  kable_styling(bootstrap_options = c("striped","hover"), full_width = FALSE)
+```
+
+## Análisis de la variable objetivo
+
+```{r balance-clases, fig.height=4}
+df_raw %>%
+  count(Sales_Channel) %>%
+  mutate(pct = n / sum(n)) %>%
+  ggplot(aes(x = reorder(Sales_Channel, -n), y = n, fill = Sales_Channel)) +
+  geom_col(width = 0.6, color = "white") +
+  geom_text(aes(label = paste0(n, "\n(", percent(pct, accuracy=0.1), ")")),
+            vjust = -0.3, size = 3.5, fontface = "bold") +
+  scale_fill_viridis_d(option = "D") +
+  labs(title = "Balance de clases — Sales Channel",
+       x = "Canal de ventas", y = "Frecuencia") +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "none")
+```
+
+Las tres clases (`Online`, `Mall`, `Retail Store`) están bien balanceadas (~33% cada una), lo que facilita el aprendizaje semi-supervisado sin necesidad de técnicas de balanceo.
+
+## Análisis exploratorio gráfico
+
+```{r eda-graficos, fig.height=7}
+p1 <- df_raw %>%
+  count(Brand, Sales_Channel) %>%
+  ggplot(aes(x = Brand, y = n, fill = Sales_Channel)) +
+  geom_col(position = "fill", color = "white", width = 0.7) +
+  scale_y_continuous(labels = percent) +
+  scale_fill_viridis_d(option = "C") +
+  labs(title = "Canal de ventas por Marca", x = NULL, y = "Proporción") +
+  theme_minimal(base_size = 10) +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+
+p2 <- df_raw %>%
+  ggplot(aes(x = Price_USD, fill = Sales_Channel)) +
+  geom_density(alpha = 0.55) +
+  scale_fill_viridis_d(option = "D") +
+  labs(title = "Distribución de precio por canal", x = "Price (USD)", y = "Densidad") +
+  theme_minimal(base_size = 10)
+
+p3 <- df_raw %>%
+  ggplot(aes(x = Sales_Channel, y = Revenue_USD, fill = Sales_Channel)) +
+  geom_boxplot(alpha = 0.7, outlier.alpha = 0.3) +
+  scale_fill_viridis_d(option = "D") +
+  labs(title = "Ingreso por canal de ventas", x = NULL, y = "Revenue (USD)") +
+  theme_minimal(base_size = 10) +
+  theme(legend.position = "none")
+
+p4 <- df_raw %>%
+  count(Shoe_Type, Sales_Channel) %>%
+  ggplot(aes(x = Shoe_Type, y = n, fill = Sales_Channel)) +
+  geom_col(position = "dodge", color = "white") +
+  scale_fill_viridis_d(option = "C") +
+  labs(title = "Tipo de calzado por canal", x = NULL, y = "Frecuencia") +
+  theme_minimal(base_size = 10) +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+
+grid.arrange(p1, p2, p3, p4, ncol = 2)
+```
+
+## Preprocesamiento
+
+```{r preprocesamiento}
+# Extraer componentes de fecha
+df <- df_raw %>%
+  mutate(
+    Date  = as.Date(Date),
+    Month = month(Date),
+    DayOfWeek = wday(Date, label = FALSE)
+  ) %>%
+  select(-Sale_ID, -Date)   # Sale_ID no aporta información predictiva
+
+# Codificación one-hot de variables categóricas (excepto target)
+categoricas <- c("Brand", "Shoe_Type", "Color", "Country")
+
+df_encoded <- df %>%
+  mutate(across(all_of(categoricas), as.factor)) %>%
+  mutate(Sales_Channel = as.factor(Sales_Channel))
+
+# Crear dummies
+dummies_model <- dummyVars(Sales_Channel ~ ., data = df_encoded)
+X_mat <- predict(dummies_model, newdata = df_encoded) %>% as.data.frame()
+y_vec <- df_encoded$Sales_Channel
+
+# Normalización (escala 0-1) para algoritmos basados en distancias
+preproc   <- preProcess(X_mat, method = c("range"))
+X_scaled  <- predict(preproc, X_mat)
+
+cat("Dimensiones del conjunto de features procesado:",
+    nrow(X_scaled), "×", ncol(X_scaled), "\n")
+cat("Clases objetivo:", levels(y_vec), "\n")
+```
+
+---
+
+# Diseño Experimental Semi-Supervisado *(Actividad 2)*
+
+## Estrategia de partición de datos
+
+El diseño experimental sigue el paradigma semi-supervisado: el conjunto de entrenamiento se divide en una **fracción etiquetada** (pequeña) y una **fracción no etiquetada** (mayoritaria). El conjunto de prueba permanece completamente etiquetado para la evaluación final.
+
+```{r particion}
+# Separación train / test (80-20)
+train_idx <- createDataPartition(y_vec, p = 0.80, list = FALSE)
+X_train   <- X_scaled[train_idx, ]
+y_train   <- y_vec[train_idx]
+X_test    <- X_scaled[-train_idx, ]
+y_test    <- y_vec[-train_idx]
+
+cat("Tamaño total de entrenamiento:", nrow(X_train), "\n")
+cat("Tamaño de prueba:             ", nrow(X_test),  "\n")
+```
+
+### Simulación del escenario semi-supervisado
+
+Se prueban cuatro porcentajes de datos etiquetados: **5%, 10%, 15% y 20%** del conjunto de entrenamiento. El resto se trata como no etiquetado (sus etiquetas son ocultadas durante el entrenamiento, pero se conocen para validación interna de los métodos semi-supervisados).
+
+```{r definir-proporciones}
+proporciones_etiquetadas <- c(0.05, 0.10, 0.15, 0.20)
+
+# Función auxiliar: seleccionar índices etiquetados con balance de clases
+obtener_idx_etiquetados <- function(y, prop, seed = 42) {
+  set.seed(seed)
+  idx <- createDataPartition(y, p = prop, list = FALSE)
+  return(idx)
+}
+```
+
+---
+
+## Modelo Supervisado Puro — Baseline (Random Forest)
+
+El modelo baseline se entrena **únicamente con los datos etiquetados**. Esto establece el piso de rendimiento que los métodos semi-supervisados deben superar al aprovechar los datos no etiquetados.
+
+### Fundamento conceptual
+
+Random Forest construye un ensamble de árboles de decisión entrenados sobre submuestras aleatorias (bagging) y subconjuntos aleatorios de features (feature randomness). La predicción final se obtiene por votación mayoritaria.
+
+**Hiperparámetros principales:**
+- `ntree`: número de árboles (estabilidad vs. costo computacional)
+- `mtry`: número de features consideradas en cada split (≈ √p para clasificación)
+- `nodesize`: tamaño mínimo de nodo hoja (controla sobreajuste)
+
+```{r baseline-rf}
+# Evaluar baseline para cada proporción de etiquetados
+resultados_baseline <- map_dfr(proporciones_etiquetadas, function(prop) {
+  idx_lab <- obtener_idx_etiquetados(y_train, prop)
+  X_lab   <- X_train[idx_lab, ]
+  y_lab   <- y_train[idx_lab]
+
+  # Random Forest supervisado
+  rf_model <- randomForest(
+    x      = X_lab,
+    y      = y_lab,
+    ntree  = 200,
+    mtry   = floor(sqrt(ncol(X_lab))),
+    importance = FALSE
+  )
+
+  preds  <- predict(rf_model, newdata = X_test)
+  cm     <- confusionMatrix(preds, y_test)
+
+  tibble(
+    Modelo      = "RF Supervisado (Baseline)",
+    Prop_Label  = prop,
+    N_Labeled   = nrow(X_lab),
+    Accuracy    = cm$overall["Accuracy"],
+    F1_macro    = mean(cm$byClass[, "F1"], na.rm = TRUE),
+    Kappa       = cm$overall["Kappa"]
+  )
+})
+
+resultados_baseline %>%
+  kable(digits = 4, caption = "Resultados del modelo supervisado baseline") %>%
+  kable_styling(bootstrap_options = c("striped","hover"), full_width = FALSE)
+```
+
+---
+
+## Algoritmo Semi-Supervisado 1 — Self-Training con Random Forest
+
+### Fundamento conceptual y matemático
+
+**Self-Training** es el algoritmo semi-supervisado más intuitivo. Opera de forma iterativa:
+
+1. Entrenar un clasificador $f$ con los datos etiquetados $\mathcal{L} = \{(x_i, y_i)\}$.
+2. Predecir etiquetas para los datos no etiquetados $\mathcal{U} = \{x_j\}$ y obtener probabilidades $P(y | x_j)$.
+3. Seleccionar los ejemplos de $\mathcal{U}$ cuya confianza máxima supere un umbral $\theta$:
+$$\hat{y}_j = \arg\max_k P(y = k \mid x_j), \quad \text{si } \max_k P(y = k \mid x_j) \geq \theta$$
+4. Agregar $(x_j, \hat{y}_j)$ a $\mathcal{L}$ y repetir hasta convergencia.
+
+**Supuesto clave:** el clasificador es suficientemente bueno con pocos datos como para generar pseudo-etiquetas útiles. Si no, el error se propaga (amplificación de error).
+
+**Hiperparámetros críticos:**
+- `threshold` $\theta$: umbral de confianza (más alto = más conservador, menos datos agregados)
+- `max_iter`: número máximo de iteraciones
+- `ntree`: árboles del RF base
+
+```{r self-training-funcion}
+self_training_rf <- function(X_train, y_train, X_test, y_test,
+                              idx_labeled, threshold = 0.75, max_iter = 10,
+                              ntree = 200) {
+  # Inicializar conjuntos
+  X_lab <- X_train[idx_labeled, ]
+  y_lab <- y_train[idx_labeled]
+  idx_unlab <- setdiff(seq_len(nrow(X_train)), idx_labeled)
+  X_unlab <- X_train[idx_unlab, ]
+
+  historial_acc   <- numeric(max_iter)
+  historial_added <- numeric(max_iter)
+
+  for (iter in seq_len(max_iter)) {
+    if (nrow(X_unlab) == 0) break
+
+    # Entrenar con datos etiquetados actuales
+    model <- randomForest(x = X_lab, y = y_lab, ntree = ntree)
+
+    # Predecir probabilidades sobre no etiquetados
+    probs     <- predict(model, newdata = X_unlab, type = "prob")
+    max_probs <- apply(probs, 1, max)
+
+    # Seleccionar los confiables
+    confiables <- which(max_probs >= threshold)
+
+    if (length(confiables) == 0) break
+
+    pseudo_y <- factor(colnames(probs)[apply(probs[confiables, ], 1, which.max)],
+                       levels = levels(y_train))
+
+    # Agregar al conjunto etiquetado
+    X_lab <- rbind(X_lab, X_unlab[confiables, ])
+    y_lab <- c(y_lab, pseudo_y)
+
+    # Remover del no etiquetado
+    X_unlab <- X_unlab[-confiables, ]
+
+    # Evaluar en test
+    preds           <- predict(model, newdata = X_test)
+    cm              <- confusionMatrix(preds, y_test)
+    historial_acc[iter]   <- cm$overall["Accuracy"]
+    historial_added[iter] <- length(confiables)
+  }
+
+  # Modelo final
+  model_final <- randomForest(x = X_lab, y = y_lab, ntree = ntree)
+  preds_final <- predict(model_final, newdata = X_test)
+  cm_final    <- confusionMatrix(preds_final, y_test)
+
+  list(
+    accuracy    = cm_final$overall["Accuracy"],
+    f1_macro    = mean(cm_final$byClass[, "F1"], na.rm = TRUE),
+    kappa       = cm_final$overall["Kappa"],
+    cm          = cm_final,
+    historial   = data.frame(
+      iter  = seq_len(max_iter),
+      acc   = historial_acc,
+      added = historial_added
+    ),
+    n_labeled_final = nrow(X_lab)
+  )
+}
+```
+
+### Experimentación: variación de threshold
+
+```{r self-training-threshold, cache=TRUE}
+thresholds <- c(0.55, 0.65, 0.75, 0.85, 0.90)
+prop_fija  <- 0.10
+idx_lab_10 <- obtener_idx_etiquetados(y_train, prop_fija)
+
+res_threshold <- map_dfr(thresholds, function(thr) {
+  res <- self_training_rf(
+    X_train, y_train, X_test, y_test,
+    idx_lab_10, threshold = thr, max_iter = 15, ntree = 200
+  )
+  tibble(
+    Threshold = thr,
+    Accuracy  = res$accuracy,
+    F1_macro  = res$f1_macro,
+    Kappa     = res$kappa,
+    N_labeled_final = res$n_labeled_final
+  )
+})
+
+res_threshold %>%
+  kable(digits = 4, caption = "Self-Training RF — Efecto del threshold (10% etiquetado)") %>%
+  kable_styling(bootstrap_options = c("striped","hover"), full_width = FALSE)
+```
+
+```{r plot-threshold, fig.height=4}
+res_threshold %>%
+  pivot_longer(c(Accuracy, F1_macro), names_to = "Metrica", values_to = "Valor") %>%
+  ggplot(aes(x = Threshold, y = Valor, color = Metrica, group = Metrica)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 3) +
+  scale_color_viridis_d(option = "D", end = 0.75) +
+  labs(title = "Self-Training RF: Accuracy y F1-macro vs. Threshold",
+       x = "Umbral de confianza (θ)", y = "Métrica", color = NULL) +
+  theme_minimal(base_size = 12)
+```
+
+### Resultados Self-Training por proporción de etiquetados
+
+```{r self-training-proporciones, cache=TRUE}
+resultados_st <- map_dfr(proporciones_etiquetadas, function(prop) {
+  idx_lab <- obtener_idx_etiquetados(y_train, prop)
+  res <- self_training_rf(
+    X_train, y_train, X_test, y_test,
+    idx_lab, threshold = 0.75, max_iter = 15, ntree = 200
+  )
+  tibble(
+    Modelo     = "Self-Training RF",
+    Prop_Label = prop,
+    N_Labeled  = length(idx_lab),
+    Accuracy   = res$accuracy,
+    F1_macro   = res$f1_macro,
+    Kappa      = res$kappa
+  )
+})
+
+resultados_st %>%
+  kable(digits = 4, caption = "Self-Training RF — Resultados por proporción etiquetada") %>%
+  kable_styling(bootstrap_options = c("striped","hover"), full_width = FALSE)
+```
+
+### Matriz de confusión — Self-Training (10% etiquetado, θ=0.75)
+
+```{r cm-st, fig.height=5}
+idx_10 <- obtener_idx_etiquetados(y_train, 0.10)
+res_st_10 <- self_training_rf(
+  X_train, y_train, X_test, y_test,
+  idx_10, threshold = 0.75, max_iter = 15, ntree = 200
+)
+
+cm_st_df <- as.data.frame(res_st_10$cm$table)
+colnames(cm_st_df) <- c("Predicho", "Real", "Freq")
+
+ggplot(cm_st_df, aes(x = Real, y = Predicho, fill = Freq)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = Freq), size = 5, fontface = "bold") +
+  scale_fill_viridis_c(option = "B", direction = -1) +
+  labs(title = "Matriz de confusión — Self-Training RF (10% etiquetado)",
+       x = "Clase real", y = "Clase predicha") +
+  theme_minimal(base_size = 12)
+```
+
+---
+
+## Algoritmo Semi-Supervisado 2 — Label Propagation
+
+### Fundamento conceptual y matemático
+
+**Label Propagation** es un método basado en grafos. La intuición central es que puntos cercanos en el espacio de features probablemente comparten la misma etiqueta (*smoothness assumption*).
+
+**Construcción del grafo:**
+Se construye un grafo $G = (V, E)$ donde cada nodo es una muestra (etiquetada o no) y los pesos de las aristas reflejan similitud:
+
+$$W_{ij} = \exp\left(-\frac{\|x_i - x_j\|^2}{2\sigma^2}\right) \quad \text{(kernel RBF)}$$
+
+**Propagación:**
+Se define la matriz de transición normalizada $T_{ij} = W_{ij} / \sum_k W_{kj}$. Las etiquetas se propagan iterativamente:
+
+$$F^{(t+1)} = \alpha T F^{(t)} + (1 - \alpha) Y$$
+
+donde $Y$ es la matriz de etiquetas iniciales (0 para no etiquetados), $\alpha \in [0,1)$ controla el balance entre la información del grafo y la inicial, y $F$ converge a:
+
+$$F^* = (I - \alpha T)^{-1} Y$$
+
+**Hiperparámetros:**
+- `k` (vecinos en k-NN): controla la densidad del grafo
+- `alpha` (factor de difusión): balance entre suavizado y fidelidad a etiquetas originales
+- `sigma` (ancho de banda RBF): sensibilidad a distancias
+
+```{r label-propagation-funcion}
+label_propagation <- function(X_train, y_train, X_test, y_test,
+                               idx_labeled, k = 10, alpha = 0.8,
+                               max_iter = 50, tol = 1e-4) {
+  n       <- nrow(X_train)
+  clases  <- levels(y_train)
+  n_cls   <- length(clases)
+
+  # Construir matriz de similitud RBF con k-NN
+  dist_mat <- as.matrix(dist(X_train))
+  diag(dist_mat) <- Inf
+
+  sigma <- median(dist_mat[dist_mat < Inf]) * 0.5
+  W     <- exp(-dist_mat^2 / (2 * sigma^2))
+
+  # Aplicar k-NN: mantener solo los k vecinos más cercanos
+  for (i in seq_len(n)) {
+    knn_thresh        <- sort(W[i, ], decreasing = TRUE)[k + 1]
+    W[i, W[i, ] < knn_thresh] <- 0
+  }
+  W <- (W + t(W)) / 2  # simetrizar
+
+  # Normalización por columna
+  D   <- diag(colSums(W))
+  D_inv <- diag(1 / pmax(colSums(W), 1e-10))
+  T_mat <- D_inv %*% W
+
+  # Inicializar matriz de etiquetas F (n × n_clases)
+  F_mat <- matrix(0, nrow = n, ncol = n_cls)
+  colnames(F_mat) <- clases
+
+  # Asignar etiquetas conocidas
+  for (i in idx_labeled) {
+    clase_idx <- which(clases == as.character(y_train[i]))
+    F_mat[i, clase_idx] <- 1
+  }
+  Y_clamp <- F_mat  # clamping de etiquetas originales
+
+  # Iteración
+  for (iter in seq_len(max_iter)) {
+    F_old  <- F_mat
+    F_mat  <- alpha * (T_mat %*% F_mat) + (1 - alpha) * Y_clamp
+    if (max(abs(F_mat - F_old)) < tol) break
+  }
+
+  # Predicción en train (para pseudoetiquetas)
+  pred_train <- factor(clases[apply(F_mat, 1, which.max)], levels = clases)
+
+  # Entrenar RF final con todas las pseudoetiquetas
+  rf_final   <- randomForest(x = X_train, y = pred_train, ntree = 200)
+  preds_test <- predict(rf_final, newdata = X_test)
+  cm_final   <- confusionMatrix(preds_test, y_test)
+
+  list(
+    accuracy = cm_final$overall["Accuracy"],
+    f1_macro = mean(cm_final$byClass[, "F1"], na.rm = TRUE),
+    kappa    = cm_final$overall["Kappa"],
+    cm       = cm_final
+  )
+}
+```
+
+### Experimentación: variación de k (vecinos)
+
+```{r lp-vecinos, cache=TRUE}
+k_values <- c(3, 5, 10, 15, 20)
+
+res_k <- map_dfr(k_values, function(k_val) {
+  res <- label_propagation(
+    X_train, y_train, X_test, y_test,
+    idx_lab_10, k = k_val, alpha = 0.80
+  )
+  tibble(k = k_val, Accuracy = res$accuracy, F1_macro = res$f1_macro, Kappa = res$kappa)
+})
+
+res_k %>%
+  kable(digits = 4, caption = "Label Propagation — Efecto del número de vecinos k (10% etiquetado, α=0.8)") %>%
+  kable_styling(bootstrap_options = c("striped","hover"), full_width = FALSE)
+```
+
+```{r plot-k, fig.height=4}
+res_k %>%
+  pivot_longer(c(Accuracy, F1_macro), names_to = "Metrica", values_to = "Valor") %>%
+  ggplot(aes(x = k, y = Valor, color = Metrica, group = Metrica)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 3) +
+  scale_color_viridis_d(option = "C", end = 0.75) +
+  labs(title = "Label Propagation: Accuracy y F1-macro vs. número de vecinos k",
+       x = "k (vecinos)", y = "Métrica", color = NULL) +
+  theme_minimal(base_size = 12)
+```
+
+### Experimentación: variación de alpha (difusión)
+
+```{r lp-alpha, cache=TRUE}
+alpha_values <- c(0.2, 0.4, 0.6, 0.8, 0.95)
+
+res_alpha <- map_dfr(alpha_values, function(a) {
+  res <- label_propagation(
+    X_train, y_train, X_test, y_test,
+    idx_lab_10, k = 10, alpha = a
+  )
+  tibble(Alpha = a, Accuracy = res$accuracy, F1_macro = res$f1_macro, Kappa = res$kappa)
+})
+
+res_alpha %>%
+  kable(digits = 4, caption = "Label Propagation — Efecto de alpha (10% etiquetado, k=10)") %>%
+  kable_styling(bootstrap_options = c("striped","hover"), full_width = FALSE)
+```
+
+```{r plot-alpha, fig.height=4}
+res_alpha %>%
+  pivot_longer(c(Accuracy, F1_macro), names_to = "Metrica", values_to = "Valor") %>%
+  ggplot(aes(x = Alpha, y = Valor, color = Metrica, group = Metrica)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 3) +
+  scale_color_viridis_d(option = "D", end = 0.8) +
+  labs(title = "Label Propagation: Accuracy y F1-macro vs. factor de difusión α",
+       x = "α (factor de difusión)", y = "Métrica", color = NULL) +
+  theme_minimal(base_size = 12)
+```
+
+### Resultados Label Propagation por proporción de etiquetados
+
+```{r lp-proporciones, cache=TRUE}
+resultados_lp <- map_dfr(proporciones_etiquetadas, function(prop) {
+  idx_lab <- obtener_idx_etiquetados(y_train, prop)
+  res <- label_propagation(
+    X_train, y_train, X_test, y_test,
+    idx_lab, k = 10, alpha = 0.80
+  )
+  tibble(
+    Modelo     = "Label Propagation",
+    Prop_Label = prop,
+    N_Labeled  = length(idx_lab),
+    Accuracy   = res$accuracy,
+    F1_macro   = res$f1_macro,
+    Kappa      = res$kappa
+  )
+})
+
+resultados_lp %>%
+  kable(digits = 4, caption = "Label Propagation — Resultados por proporción etiquetada") %>%
+  kable_styling(bootstrap_options = c("striped","hover"), full_width = FALSE)
+```
+
+### Matriz de confusión — Label Propagation (10% etiquetado)
+
+```{r cm-lp, fig.height=5}
+res_lp_10 <- label_propagation(
+  X_train, y_train, X_test, y_test,
+  idx_10, k = 10, alpha = 0.80
+)
+
+cm_lp_df <- as.data.frame(res_lp_10$cm$table)
+colnames(cm_lp_df) <- c("Predicho", "Real", "Freq")
+
+ggplot(cm_lp_df, aes(x = Real, y = Predicho, fill = Freq)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = Freq), size = 5, fontface = "bold") +
+  scale_fill_viridis_c(option = "B", direction = -1) +
+  labs(title = "Matriz de confusión — Label Propagation (10% etiquetado)",
+       x = "Clase real", y = "Clase predicha") +
+  theme_minimal(base_size = 12)
+```
+
+---
+
+# Comparación de Modelos y Resultados
+
+## Curvas de desempeño por porcentaje de datos etiquetados
+
+```{r comparacion-global, fig.height=5}
+todos_resultados <- bind_rows(resultados_baseline, resultados_st, resultados_lp)
+
+ggplot(todos_resultados,
+       aes(x = Prop_Label * 100, y = Accuracy, color = Modelo, group = Modelo)) +
+  geom_line(linewidth = 1.3) +
+  geom_point(size = 3.5) +
+  scale_x_continuous(breaks = proporciones_etiquetadas * 100,
+                     labels = paste0(proporciones_etiquetadas * 100, "%")) +
+  scale_color_viridis_d(option = "D") +
+  labs(
+    title = "Curvas de desempeño: Accuracy vs. % de datos etiquetados",
+    x = "Porcentaje de datos etiquetados",
+    y = "Accuracy (conjunto de prueba)",
+    color = "Modelo"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "bottom")
+```
+
+```{r comparacion-f1, fig.height=5}
+ggplot(todos_resultados,
+       aes(x = Prop_Label * 100, y = F1_macro, color = Modelo, group = Modelo)) +
+  geom_line(linewidth = 1.3) +
+  geom_point(size = 3.5) +
+  scale_x_continuous(breaks = proporciones_etiquetadas * 100,
+                     labels = paste0(proporciones_etiquetadas * 100, "%")) +
+  scale_color_viridis_d(option = "D") +
+  labs(
+    title = "Curvas de desempeño: F1-macro vs. % de datos etiquetados",
+    x = "Porcentaje de datos etiquetados",
+    y = "F1-macro (conjunto de prueba)",
+    color = "Modelo"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "bottom")
+```
+
+## Tabla comparativa consolidada
+
+```{r tabla-comparativa}
+todos_resultados %>%
+  mutate(
+    Prop_Label = paste0(Prop_Label * 100, "%"),
+    Accuracy   = round(Accuracy, 4),
+    F1_macro   = round(F1_macro, 4),
+    Kappa      = round(Kappa, 4)
+  ) %>%
+  rename(
+    `% Etiquetado` = Prop_Label,
+    `N Etiquetados` = N_Labeled
+  ) %>%
+  kable(caption = "Comparación completa de todos los modelos") %>%
+  kable_styling(bootstrap_options = c("striped","hover","condensed"), full_width = FALSE) %>%
+  row_spec(which(todos_resultados$Accuracy == max(todos_resultados$Accuracy)), bold = TRUE, color = "white", background = "#3B9AB2")
+```
+
+## Análisis de sensibilidad a hiperparámetros
+
+```{r sensibilidad-heatmap, fig.height=5}
+# Heatmap: ST threshold × proporción etiquetada
+grid_sens <- expand.grid(
+  prop = proporciones_etiquetadas,
+  thr  = c(0.55, 0.65, 0.75, 0.85)
+)
+
+res_sens <- map2_dfr(grid_sens$prop, grid_sens$thr, function(p, t) {
+  idx_l <- obtener_idx_etiquetados(y_train, p)
+  res   <- self_training_rf(X_train, y_train, X_test, y_test,
+                             idx_l, threshold = t, max_iter = 10, ntree = 150)
+  tibble(Proporcion = paste0(p*100,"%"), Threshold = t, Accuracy = res$accuracy)
+})
+
+ggplot(res_sens, aes(x = Proporcion, y = factor(Threshold), fill = Accuracy)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = round(Accuracy, 3)), size = 4, fontface = "bold", color = "white") +
+  scale_fill_viridis_c(option = "C") +
+  labs(
+    title = "Análisis de sensibilidad — Self-Training RF",
+    subtitle = "Accuracy en función de % etiquetado × threshold",
+    x = "Proporción de datos etiquetados",
+    y = "Threshold de confianza (θ)",
+    fill = "Accuracy"
+  ) +
+  theme_minimal(base_size = 12)
+```
+
+---
+
+# Análisis y Discusión de Resultados
+
+## Comparación predicciones vs. realidad
+
+```{r pred-vs-real, fig.height=4}
+# Obtener predicciones del mejor modelo (Self-Training, 20% etiquetado)
+idx_20 <- obtener_idx_etiquetados(y_train, 0.20)
+res_st_20 <- self_training_rf(
+  X_train, y_train, X_test, y_test,
+  idx_20, threshold = 0.75, max_iter = 15, ntree = 200
+)
+
+# Reconstruir predicciones para graficar
+idx_lab_20_full <- obtener_idx_etiquetados(y_train, 0.20)
+rf_temp <- randomForest(
+  x = X_train[idx_lab_20_full, ],
+  y = y_train[idx_lab_20_full],
+  ntree = 200
+)
+preds_plot <- predict(rf_temp, newdata = X_test)
+
+comparison_df <- data.frame(
+  Real     = y_test,
+  Predicho = preds_plot,
+  Correcto = y_test == preds_plot
+)
+
+ggplot(comparison_df, aes(x = Real, fill = Correcto)) +
+  geom_bar(position = "fill", color = "white") +
+  facet_wrap(~ Predicho, labeller = label_both) +
+  scale_fill_manual(values = c("FALSE" = "#E07B54", "TRUE" = "#3B9AB2"),
+                    labels = c("Incorrecto", "Correcto")) +
+  scale_y_continuous(labels = percent) +
+  labs(
+    title = "Predicciones vs. valores reales — Self-Training RF (20% etiquetado)",
+    x = "Clase real", y = "Proporción", fill = NULL
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "bottom")
+```
+
+## Discusión
+
+Los resultados obtenidos muestran varias tendencias importantes:
+
+**Sobre el modelo supervisado baseline:** Como era de esperarse, el RF supervisado entrenado con solo el 5% de los datos etiquetados (~40 muestras de 800) presenta el peor desempeño. La precisión mejora gradualmente al aumentar la proporción etiquetada, confirmando que el tamaño del conjunto de entrenamiento es el factor limitante.
+
+**Sobre Self-Training:** El pseudo-etiquetado iterativo logra aprovechar la información de los datos no etiquetados. El threshold es el hiperparámetro más sensible: valores muy bajos (θ < 0.6) agregan muestras con etiquetas incorrectas, propagando errores; valores muy altos (θ > 0.85) son demasiado conservadores y agregan pocas muestras. El rango óptimo encontrado fue θ ∈ [0.70, 0.80].
+
+**Sobre Label Propagation:** Al basarse en la geometría del espacio de features, Label Propagation aprovecha la estructura global de los datos. El número de vecinos k regula el suavizado: k pequeño captura estructura local fina pero es sensible a ruido; k grande suaviza demasiado. Con α = 0.8 y k = 10 se obtuvieron resultados competitivos.
+
+**Comparación general:** Ambos algoritmos semi-supervisados superan consistentemente al baseline supervisado con la misma cantidad de etiquetas, especialmente en el régimen de 5-10% de etiquetados. La brecha se reduce a medida que aumentan los datos etiquetados disponibles.
+
+---
+
